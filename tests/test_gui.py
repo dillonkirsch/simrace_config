@@ -6,12 +6,14 @@ from unittest import mock
 from sim_controls_manager.adapters.assetto_corsa import NativeBinding as ACNativeBinding
 from sim_controls_manager.adapters.acc import NativeBinding as ACCNativeBinding
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
+from sim_controls_manager.adapters.le_mans_ultimate import NativeBinding as LMUNativeBinding
 from sim_controls_manager import gui
 from sim_controls_manager.control_names import NativeControlName
 from sim_controls_manager.gui import (
     _binding_text,
     _assetto_corsa_binding_text,
     _acc_binding_text,
+    _lmu_binding_text,
     _matching_control_ids,
     _matching_tablet_shortcut_ids,
     _native_control_text,
@@ -20,6 +22,10 @@ from sim_controls_manager.gui import (
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_formats_lmu_button_as_simhub_one_based(self) -> None:
+        binding = LMUNativeBinding("button", 38, 7, "virtual-key", "SimHub")
+        self.assertEqual(_lmu_binding_text(binding), "Button 7 • SimHub")
+
     def test_formats_acc_button_as_user_facing_one_based(self) -> None:
         binding = ACCNativeBinding("button", 6, 2, "instance", "SimHub")
         self.assertEqual(_acc_binding_text(binding), "Button 7 • Device 2")
@@ -124,6 +130,20 @@ class GuiFormattingTests(unittest.TestCase):
                 acc_root,
             )
             self.assertNotEqual(with_ac, with_acc)
+
+            lmu_root = root / "Le Mans Ultimate"
+            lmu_preset = lmu_root / "UserData" / "Controller" / "Presets" / "Tablet.json"
+            lmu_preset.parent.mkdir(parents=True)
+            lmu_preset.write_text("{}", encoding="utf-8")
+            with_lmu = _source_signature(
+                root,
+                settings,
+                (DeviceInfo("instance", "product", "SimHub vJoy"),),
+                ac_root,
+                acc_root,
+                lmu_root,
+            )
+            self.assertNotEqual(with_acc, with_lmu)
 
     def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
         with mock.patch.object(gui, "SimControlsApp") as app_type:

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import acc, assetto_corsa, iracing
+from sim_controls_manager.adapters import acc, assetto_corsa, iracing, le_mans_ultimate
 from sim_controls_manager.catalog import CatalogValidationError, validate_catalog
 from sim_controls_manager.file_change import (
     FileChangeError,
@@ -184,6 +184,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite a target changed since apply after reviewing it",
     )
+
+    lmu_parser = commands.add_parser(
+        "lmu",
+        help="Discover, inspect, preview, and safely update Le Mans Ultimate presets",
+    )
+    lmu_commands = lmu_parser.add_subparsers(dest="lmu_command")
+    lmu_discover = lmu_commands.add_parser(
+        "discover", help="List LMU controller presets without changing them"
+    )
+    lmu_discover.add_argument("--root", type=Path, help="Exact Le Mans Ultimate install path")
+    lmu_inspect = lmu_commands.add_parser("inspect", help="Inspect shortcut actions in a preset")
+    lmu_inspect.add_argument("--root", type=Path, help="Exact Le Mans Ultimate install path")
+    lmu_inspect.add_argument("--profile", required=True, help="Exact controller preset name")
+    lmu_plan = lmu_commands.add_parser("plan", help="Preview shortcut changes without writing")
+    _add_lmu_binding_arguments(lmu_plan)
+    lmu_apply = lmu_commands.add_parser(
+        "apply", help="Preview, back up, and apply shortcut changes"
+    )
+    _add_lmu_binding_arguments(lmu_apply)
+    lmu_apply.add_argument("--yes", action="store_true", help="Confirm the previewed write")
+    lmu_restore = lmu_commands.add_parser("restore", help="Restore an LMU backup receipt")
+    lmu_restore.add_argument("receipt", type=Path)
+    lmu_restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite a target changed since apply after reviewing it",
+    )
     return parser
 
 
@@ -248,6 +275,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "acc" and args.acc_command == "restore":
         return _restore_acc(args.receipt, args.force)
+    if args.command == "lmu" and args.lmu_command == "discover":
+        return _discover_lmu(args.root)
+    if args.command == "lmu" and args.lmu_command == "inspect":
+        return _inspect_lmu(args.root, args.profile)
+    if args.command == "lmu" and args.lmu_command == "plan":
+        return _plan_lmu(args.root, args.profile, args.catalog)
+    if args.command == "lmu" and args.lmu_command == "apply":
+        return _apply_lmu(args.root, args.profile, args.catalog, args.yes)
+    if args.command == "lmu" and args.lmu_command == "restore":
+        return _restore_lmu(args.receipt, args.force)
 
     parser.error("a subcommand is required")
     return 2
@@ -898,6 +935,155 @@ def _restore_acc(receipt_path: Path, force: bool) -> int:
 def _acc_backup_directory() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return base / "sim-controls-manager" / "backups" / "acc" / "Live"
+
+
+def _discover_lmu(root: Path | None) -> int:
+    try:
+        result = le_mans_ultimate.discover(root)
+    except OSError as error:
+        print(f"Le Mans Ultimate discovery failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Le Mans Ultimate directory: {result.lmu_directory}")
+    if result.profiles:
+        print("Controller presets:")
+        for profile in result.profiles:
+            print(f"- {profile.name}: {profile.controls_path}")
+    else:
+        print("Controller presets: none")
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+    print("Read-only discovery complete; no files were changed.")
+    return 0
+
+
+def _select_lmu_profile(
+    discovery: le_mans_ultimate.DiscoveryResult, requested_profile: str
+) -> le_mans_ultimate.ProfileCandidate:
+    matches = [
+        profile
+        for profile in discovery.profiles
+        if profile.name.casefold() == requested_profile.casefold()
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"profile {requested_profile!r} was not found or is ambiguous")
+    return matches[0]
+
+
+def _inspect_lmu(root: Path | None, profile_name: str) -> int:
+    try:
+        profile = _select_lmu_profile(le_mans_ultimate.discover(root), profile_name)
+        inspection = le_mans_ultimate.inspect_profile(profile)
+    except (OSError, ValueError) as error:
+        print(f"Le Mans Ultimate inspection failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Profile: {profile.name}")
+    print(f"File: {profile.controls_path}")
+    print(f"Format: LMU {inspection.input_type} preset; source verified")
+    for action in inspection.actions:
+        print(
+            f"- {action.action_id} -> {action.native_action}: "
+            f"{_format_lmu_binding(action.binding)}"
+        )
+    print("Read-only inspection complete; no files were changed.")
+    return 0
+
+
+def _add_lmu_binding_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", type=Path, help="Exact Le Mans Ultimate install path")
+    parser.add_argument("--profile", required=True, help="Exact controller preset name")
+    parser.add_argument("--catalog", required=True, type=Path)
+
+
+def _build_lmu_plan(
+    root: Path | None, profile_name: str, catalog_path: Path
+) -> le_mans_ultimate.BindingPlan:
+    profile = _select_lmu_profile(le_mans_ultimate.discover(root), profile_name)
+    return le_mans_ultimate.plan_bindings(profile, _load_catalog(catalog_path))
+
+
+def _print_lmu_plan(plan: le_mans_ultimate.BindingPlan) -> None:
+    print(f"Profile: {plan.profile.name}")
+    print(f"File: {plan.profile.controls_path}")
+    print(f"Source SHA-256: {plan.source_hash}")
+    if not plan.changes:
+        print("No changes: all requested shortcuts already match.")
+        return
+    print("Proposed shortcut changes:")
+    for change in plan.changes:
+        print(
+            f"- {change.action_id} -> {change.native_action}: "
+            f"{_format_lmu_binding(change.before)} -> {_format_lmu_binding(change.after)}"
+        )
+
+
+def _format_lmu_binding(binding: le_mans_ultimate.NativeBinding) -> str:
+    if binding.binding_type == "button" and binding.virtual_button is not None:
+        return f"button {binding.virtual_button} on {binding.instance_name or binding.device_key}"
+    return binding.binding_type
+
+
+def _plan_lmu(root: Path | None, profile_name: str, catalog_path: Path) -> int:
+    try:
+        plan = _build_lmu_plan(root, profile_name, catalog_path)
+    except (OSError, ValueError, CatalogValidationError) as error:
+        print(f"Le Mans Ultimate plan failed: {error}", file=sys.stderr)
+        return 1
+    _print_lmu_plan(plan)
+    print("Preview only; no files were changed.")
+    return 0
+
+
+def _apply_lmu(
+    root: Path | None, profile_name: str, catalog_path: Path, confirmed: bool
+) -> int:
+    try:
+        binding_plan = _build_lmu_plan(root, profile_name, catalog_path)
+        _print_lmu_plan(binding_plan)
+        if not binding_plan.changes:
+            return 0
+        if not confirmed:
+            print("Preview only. Re-run with --yes to back up and apply these changes.")
+            return 0
+        file_plan = plan_file_change(binding_plan.profile.controls_path, binding_plan.next_bytes)
+        if file_plan.source_hash != binding_plan.source_hash:
+            raise FileChangeError(
+                "SOURCE_CHANGED", "controller preset changed while the plan was being prepared"
+            )
+        result = apply_file_change(
+            file_plan,
+            _lmu_backup_directory(binding_plan.profile.name),
+            validate=le_mans_ultimate.validate_controls_bytes,
+            is_target_in_use=le_mans_ultimate.is_lmu_running,
+        )
+    except (OSError, ValueError, CatalogValidationError, FileChangeError) as error:
+        print(f"Le Mans Ultimate apply failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Applied with verified backup. Restore receipt: {result.receipt_path}")
+    return 0
+
+
+def _restore_lmu(receipt_path: Path, force: bool) -> int:
+    try:
+        result = restore_file(
+            receipt_path,
+            allow_changed_target=force,
+            is_target_in_use=le_mans_ultimate.is_lmu_running,
+            validate=le_mans_ultimate.validate_controls_bytes,
+        )
+    except (OSError, ValueError, FileChangeError) as error:
+        print(f"Le Mans Ultimate restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Restore status: {result.status}")
+    return 0
+
+
+def _lmu_backup_directory(profile_name: str) -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    safe_profile = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_"
+        for character in profile_name
+    )
+    return base / "sim-controls-manager" / "backups" / "lmu" / safe_profile
 
 
 if __name__ == "__main__":

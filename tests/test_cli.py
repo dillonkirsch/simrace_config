@@ -313,6 +313,66 @@ class CliTests(unittest.TestCase):
         self.assertEqual(restore_exit, 0)
         self.assertEqual(controls_path.read_bytes(), original)
 
+    def test_lmu_apply_and_restore_end_to_end(self) -> None:
+        lmu_root = self.root / "Le Mans Ultimate"
+        controls_path = (
+            lmu_root / "UserData" / "Controller" / "Presets" / "Tablet.JSON"
+        )
+        controls_path.parent.mkdir(parents=True)
+        original = _minimal_lmu_controls()
+        controls_path.write_bytes(original)
+        catalog_path = self._write_catalog(
+            {
+                "schemaVersion": 1,
+                "virtualDevice": {
+                    "provider": "simhub-control-mapper",
+                    "identity": "SimHub Virtual Controller",
+                },
+                "bindings": [
+                    {"actionId": "pit_limiter", "virtualButton": 7},
+                    {"actionId": "tc_increase", "virtualButton": 8},
+                    {"actionId": "tc_decrease", "virtualButton": 9},
+                ],
+            }
+        )
+        backups = self.root / "lmu-backups"
+        output = io.StringIO()
+        with (
+            mock.patch.object(cli, "_lmu_backup_directory", return_value=backups),
+            mock.patch.object(
+                cli.le_mans_ultimate, "is_lmu_running", return_value=False
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = cli.main(
+                [
+                    "lmu",
+                    "apply",
+                    "--root",
+                    str(lmu_root),
+                    "--profile",
+                    "Tablet",
+                    "--catalog",
+                    str(catalog_path),
+                    "--yes",
+                ]
+            )
+        self.assertEqual(exit_code, 0, output.getvalue())
+        updated = json.loads(controls_path.read_bytes())
+        self.assertEqual(updated["Input"]["Speed Limiter"]["id"], 38)
+        self.assertEqual(updated["Input"]["Shift Up"]["id"], 51)
+        receipt = next(backups.glob("*-receipt.json"))
+
+        with (
+            mock.patch.object(
+                cli.le_mans_ultimate, "is_lmu_running", return_value=False
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            restore_exit = cli.main(["lmu", "restore", str(receipt)])
+        self.assertEqual(restore_exit, 0)
+        self.assertEqual(controls_path.read_bytes(), original)
+
 
 def _minimal_iracing_controls() -> bytes:
     zero = b"\x00" * 16
@@ -382,6 +442,24 @@ def _minimal_acc_controls() -> bytes:
         ],
         "gamepadSettings": {"raceCommandButtonList": []},
         "keyboardSettings": {"raceCommandButtonList": []},
+    }
+    return json.dumps(value, indent="\t").replace("\n", "\r\n").encode("utf-8")
+
+
+def _minimal_lmu_controls() -> bytes:
+    value = {
+        "Alternative Input": {},
+        "Devices": {
+            "SimHub Virtual Controller-ABC": {
+                "Type": "Wheel",
+                "instance name": "SimHub Virtual Controller",
+                "layout": {"axes": 0, "buttons": 32, "povs": 0},
+            }
+        },
+        "Input": {
+            "Shift Up": {"device": "SimHub Virtual Controller-ABC", "id": 51}
+        },
+        "Type": "Direct Input",
     }
     return json.dumps(value, indent="\t").replace("\n", "\r\n").encode("utf-8")
 

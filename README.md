@@ -16,10 +16,12 @@ positional/extended batch is in
 replay batch is in [MEDIA_CONTROL_MAP.md](MEDIA_CONTROL_MAP.md). The full
 structured vocabulary is available from `sim_controls_manager.control_names`.
 
-**Status:** Windows GUI proof of concept. SimHub mapping inspection, guarded iRacing
-three-action writes, verified restore, Windows packaging, and release/self-update
-plumbing are implemented. Real vJoy and in-game validation remain before the
-first adapter is considered complete.
+**Status:** Windows GUI proof of concept with four provisional, write-capable
+adapters: iRacing, Assetto Corsa, Assetto Corsa Competizione, and Le Mans
+Ultimate. Each adapter
+uses preview, conflict checks, process guards, verified backup, guarded apply,
+and receipt-based restore. Real SimHub virtual-device and in-game validation
+remain before any adapter is considered production-complete.
 
 ## Desktop app
 
@@ -29,14 +31,14 @@ Launch the modern desktop interface with no arguments:
 python -m sim_controls_manager
 ```
 
-The app discovers iRacing profiles, reads the three supported SimHub Control
-Mapper roles, lists connected DirectInput controllers, previews exact binding
-changes, and applies them through the same verified backup and rollback path as
-the CLI. Live sync watches the SimHub settings file, iRacing profile files and
-active-profile selector, and connected controller identities every few seconds.
-Changes are rescanned and re-previewed automatically; they are never applied
-without explicit confirmation. The Recovery screen previews a receipt before
-restoring its backup.
+The app discovers iRacing, Assetto Corsa, ACC, and Le Mans Ultimate control profiles, reads the
+three supported SimHub Control Mapper roles, lists connected DirectInput
+controllers, previews exact binding changes, and applies them through the same
+verified backup and rollback path as the CLI. Live sync watches the simulator
+control files, SimHub settings, profile selection, and connected controller
+identities every few seconds. Changes are rescanned and re-previewed
+automatically; they are never applied without explicit confirmation. The
+Recovery screen previews a receipt before restoring its backup.
 
 The **Tablet shortcuts** screen is intentionally limited to button actions for
 a SimHub tablet/button-deck workflow. Steering, throttle, brake, clutch,
@@ -62,18 +64,24 @@ task. Steering, pedals, calibration, and force feedback remain game-native in
 the initial scope. SimHub documents roles, a vJoy output, and an Arduino bridge:
 [Control Mapper documentation](https://github.com/SHWotever/SimHub/wiki/Control-Mapper-plugin).
 
-## Target games
+## Adapter status
 
-| Game | Initial investigation | Planned first level of support |
-| --- | --- | --- |
-| iRacing | Binary control settings and active control profiles | Guarded three-action preview/apply/restore implemented; real vJoy and in-game verification pending |
-| Assetto Corsa | INI controls and saved presets | Selected buttons |
-| Assetto Corsa Competizione | JSON controls and saved presets | Selected buttons after schema validation |
-| Le Mans Ultimate | JSON input files, GameInput versus DirectInput | Selected buttons after device tests |
-| Assetto Corsa EVO | Settings moved to `Saved Games/ACE`; binding schema unverified | Discovery and backup only until proven writable |
-| Automobilista 2 | Controller settings `.sav` and in-game profiles | Discovery and backup only until proven writable |
+The control-name crosswalk covers all six games, but a name in the crosswalk is
+not the same thing as a working adapter. The current implementation status is:
 
-These are **targets, not promises of working adapters**. The earlier assumption that AMS2 only had a single profile is outdated: multiple in-game profiles were added. iRacing also introduced native control profiles in 2026. See [research notes](RESEARCH.md).
+| Game | Adapter status | Implemented shortcut support | Remaining work |
+| --- | --- | --- | --- |
+| iRacing | **Built — provisional** | Discovers legacy and native profiles; inspects, previews, applies, and restores `PitSpeedLimiter`, `TractionControlInc`, and `TractionControlDec` in the binary GFCC format | Verify a real SimHub virtual controller and all three writes in game |
+| Assetto Corsa | **Built — provisional** | Discovers live controls and saved INI presets; previews, applies, and restores `[TCUP]` and `[TCDN]`; pit limiter is correctly reported as not exposed | Verify the virtual-controller `JOY` index and both shortcuts in game |
+| Assetto Corsa Competizione | **Built — provisional** | Discovers and validates live JSON; previews, applies, and restores `PitLimiter`, `IncreaseTC`, and `DecreaseTC` on a selected non-pedal device | Register the SimHub virtual controller in ACC and verify all three shortcuts in game |
+| Assetto Corsa EVO | **Needs adapter** | Native shortcut names are inventoried for the crosswalk only | Decode and validate the packed binding schema, device identity, button indexing, discovery, and safe write format |
+| Automobilista 2 | **Needs adapter** | Installed control labels are inventoried for the crosswalk only | Decode the protected/binary `.sav` controller format and its multi-profile behavior before enabling writes |
+| Le Mans Ultimate | **Built — provisional** | Discovers JSON controller presets; previews, applies, and restores `Speed Limiter`, `Traction Control Up`, and `Traction Control Down` on the selected non-pedal SimHub device | Create a user preset containing the SimHub controller and verify device identity, the `32 + button - 1` DirectInput ID translation, and all three shortcuts in game |
+
+“Built — provisional” means the adapter code, tests, GUI/CLI workflow, backup,
+apply, and restore paths exist. It does **not** yet mean production-ready or
+fully verified in the simulator. See [research notes](RESEARCH.md) for the
+evidence required to promote an adapter beyond provisional status.
 
 ## Intended workflow
 
@@ -99,11 +107,11 @@ manually configured action catalog. It defines the three proof-of-concept
 actions and rejects unknown schema versions, unsupported actions, duplicate
 actions, and duplicate virtual-button assignments.
 
-The safety module can also plan a byte-exact file replacement, detect changes
+The safety module can plan a byte-exact file replacement, detect changes
 since preview, create a hash-verified backup and receipt, roll back a failed
 post-write validation, preview a restore, and refuse to overwrite intervening
-changes. It is adapter-independent; no game writes are enabled until a tested
-adapter supplies native-format validation.
+changes. It is adapter-independent; game writes are enabled only when an
+adapter supplies native-format validation and a process guard.
 
 Requirements for development: Python 3.12 or newer. Create an environment,
 install the project, and run the tests with:
@@ -127,7 +135,8 @@ python -m sim_controls_manager catalog validate examples/catalog.example.json
 ```
 
 The first adapter reuses the proven active-profile and binary-format research
-from the MIT-licensed iRacing Config Tracker. It is intentionally read-only:
+from the MIT-licensed iRacing Config Tracker. Discovery and inspection are
+read-only:
 
 ```powershell
 python -m sim_controls_manager iracing discover
@@ -245,6 +254,34 @@ SimControlsManagerCLI.exe acc restore <receipt-path>
 ACC must already list the SimHub virtual controller in `commandDevices`; launch
 the game and select/detect that controller once before applying shortcuts. ACC
 must be closed for apply and restore operations.
+
+### Le Mans Ultimate adapter
+
+The LMU adapter discovers `UserData\Controller\Presets\*.JSON` inside the game
+installation and requires you to choose a preset explicitly. It is limited to
+three tablet/button-deck shortcuts:
+
+- `pit_limiter` → `Speed Limiter`
+- `tc_increase` → `Traction Control Up`
+- `tc_decrease` → `Traction Control Down`
+
+The adapter matches the selected SimHub virtual controller to LMU's device
+`instance name`, rejects pedal-only devices and occupied buttons, and converts
+SimHub's one-based button to LMU's DirectInput ID (`32 + button - 1`). It only
+patches those three properties in the preset's `Input` object. Pedal axes,
+throttle, brake, clutch, handbrake, shifting, `Devices`, and `Alternative Input`
+are not modified.
+
+Create and save an LMU controller preset that already contains the SimHub
+virtual controller, then close LMU before applying or restoring:
+
+```powershell
+SimControlsManagerCLI.exe lmu discover
+SimControlsManagerCLI.exe lmu inspect --profile "Tablet Shortcuts"
+SimControlsManagerCLI.exe lmu plan --profile "Tablet Shortcuts" --catalog examples\catalog.example.json
+SimControlsManagerCLI.exe lmu apply --profile "Tablet Shortcuts" --catalog examples\catalog.example.json --yes
+SimControlsManagerCLI.exe lmu restore <receipt-path>
+```
 
 ## Windows executable and updates
 
