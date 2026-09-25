@@ -4,19 +4,26 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from sim_controls_manager.adapters.assetto_corsa import NativeBinding as ACNativeBinding
+from sim_controls_manager.adapters.acc import NativeBinding as ACCNativeBinding
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
 from sim_controls_manager import gui
 from sim_controls_manager.control_names import NativeControlName
 from sim_controls_manager.gui import (
     _binding_text,
     _assetto_corsa_binding_text,
+    _acc_binding_text,
     _matching_control_ids,
+    _matching_tablet_shortcut_ids,
     _native_control_text,
     _source_signature,
 )
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_formats_acc_button_as_user_facing_one_based(self) -> None:
+        binding = ACCNativeBinding("button", 6, 2, "instance", "SimHub")
+        self.assertEqual(_acc_binding_text(binding), "Button 7 • Device 2")
+
     def test_formats_assetto_corsa_button_as_user_facing_one_based(self) -> None:
         binding = ACNativeBinding("button", 1, 6, None, None)
         self.assertEqual(
@@ -44,6 +51,24 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertIn("pit_limiter", _matching_control_ids("pit speed limiter"))
         self.assertIn("tc_increase", _matching_control_ids("TractionControlInc"))
         self.assertEqual(_matching_control_ids("not-a-real-control-name"), ())
+
+    def test_tablet_shortcuts_exclude_driving_inputs_and_shifting(self) -> None:
+        shortcuts = _matching_tablet_shortcut_ids("")
+        for excluded in (
+            "steering",
+            "accelerator",
+            "brake",
+            "clutch",
+            "handbrake",
+            "shift_up",
+            "shift_down",
+            "gear_1",
+            "reverse_gear",
+        ):
+            self.assertNotIn(excluded, shortcuts)
+        self.assertIn("pit_limiter", shortcuts)
+        self.assertIn("tc_increase", shortcuts)
+        self.assertIn("headlights", shortcuts)
 
     def test_displays_iracing_zero_based_button_as_user_facing_one_based(self) -> None:
         binding = NativeBinding("button", 6, "instance", "product")
@@ -86,6 +111,19 @@ class GuiFormattingTests(unittest.TestCase):
                 ac_root,
             )
             self.assertNotEqual(with_device, with_ac)
+
+            acc_root = root / "Assetto Corsa Competizione"
+            acc_controls = acc_root / "Config" / "controls.json"
+            acc_controls.parent.mkdir(parents=True)
+            acc_controls.write_text("{}", encoding="utf-8")
+            with_acc = _source_signature(
+                root,
+                settings,
+                (DeviceInfo("instance", "product", "SimHub vJoy"),),
+                ac_root,
+                acc_root,
+            )
+            self.assertNotEqual(with_ac, with_acc)
 
     def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
         with mock.patch.object(gui, "SimControlsApp") as app_type:

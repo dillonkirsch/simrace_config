@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import assetto_corsa, iracing
+from sim_controls_manager.adapters import acc, assetto_corsa, iracing
 from sim_controls_manager.catalog import CatalogValidationError, validate_catalog
 from sim_controls_manager.file_change import (
     FileChangeError,
@@ -141,6 +141,49 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite a target changed since apply after reviewing it",
     )
+
+    acc_parser = commands.add_parser(
+        "acc",
+        help="Discover, inspect, preview, and safely update ACC shortcuts",
+    )
+    acc_commands = acc_parser.add_subparsers(dest="acc_command")
+    acc_discover = acc_commands.add_parser(
+        "discover", help="Find ACC's live controls file without changing it"
+    )
+    acc_discover.add_argument(
+        "--root",
+        type=Path,
+        help="Exact Documents\\Assetto Corsa Competizione path",
+    )
+    acc_inspect = acc_commands.add_parser(
+        "inspect", help="Inspect supported shortcut actions"
+    )
+    acc_inspect.add_argument(
+        "--root",
+        type=Path,
+        help="Exact Documents\\Assetto Corsa Competizione path",
+    )
+    acc_plan = acc_commands.add_parser(
+        "plan", help="Preview shortcut changes without writing"
+    )
+    _add_acc_binding_arguments(acc_plan)
+    acc_apply = acc_commands.add_parser(
+        "apply", help="Preview, back up, and apply shortcut changes"
+    )
+    _add_acc_binding_arguments(acc_apply)
+    acc_apply.add_argument("--yes", action="store_true", help="Confirm the previewed write")
+    acc_apply.add_argument(
+        "--allow-active-profile",
+        action="store_true",
+        help="Permit writing ACC's live controls file",
+    )
+    acc_restore = acc_commands.add_parser("restore", help="Restore an ACC backup receipt")
+    acc_restore.add_argument("receipt", type=Path)
+    acc_restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite a target changed since apply after reviewing it",
+    )
     return parser
 
 
@@ -193,6 +236,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "assetto-corsa" and args.assetto_corsa_command == "restore":
         return _restore_assetto_corsa(args.receipt, args.force)
+    if args.command == "acc" and args.acc_command == "discover":
+        return _discover_acc(args.root)
+    if args.command == "acc" and args.acc_command == "inspect":
+        return _inspect_acc(args.root)
+    if args.command == "acc" and args.acc_command == "plan":
+        return _plan_acc(args.root, args.catalog)
+    if args.command == "acc" and args.acc_command == "apply":
+        return _apply_acc(
+            args.root, args.catalog, args.yes, args.allow_active_profile
+        )
+    if args.command == "acc" and args.acc_command == "restore":
+        return _restore_acc(args.receipt, args.force)
 
     parser.error("a subcommand is required")
     return 2
@@ -691,6 +746,158 @@ def _assetto_corsa_backup_directory(profile_name: str) -> Path:
         / "assetto-corsa"
         / safe_profile
     )
+
+
+def _discover_acc(root: Path | None) -> int:
+    try:
+        result = acc.discover(root)
+    except OSError as error:
+        print(f"ACC discovery failed: {error}", file=sys.stderr)
+        return 1
+    print(f"ACC directory: {result.acc_directory}")
+    if result.profiles:
+        for profile in result.profiles:
+            print(f"Profile: {profile.name} (live): {profile.controls_path}")
+    else:
+        print("Profiles: none")
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+    print("Read-only discovery complete; no files were changed.")
+    return 0
+
+
+def _acc_profile(root: Path | None) -> acc.ProfileCandidate:
+    discovery = acc.discover(root)
+    if len(discovery.profiles) != 1:
+        raise ValueError("ACC's live controls profile was not found")
+    return discovery.profiles[0]
+
+
+def _inspect_acc(root: Path | None) -> int:
+    try:
+        profile = _acc_profile(root)
+        inspection = acc.inspect_profile(profile)
+    except (OSError, ValueError) as error:
+        print(f"ACC inspection failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Profile: {profile.name} (live)")
+    print(f"File: {profile.controls_path}")
+    print(f"Format: ACC controls JSON version {inspection.version}; source verified")
+    for action in inspection.actions:
+        print(
+            f"- {action.action_id} -> {action.native_action}: "
+            f"{_format_acc_binding(action.binding)}"
+        )
+    print("Read-only inspection complete; no files were changed.")
+    return 0
+
+
+def _add_acc_binding_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--root",
+        type=Path,
+        help="Exact Documents\\Assetto Corsa Competizione path",
+    )
+    parser.add_argument("--catalog", required=True, type=Path)
+
+
+def _build_acc_plan(root: Path | None, catalog_path: Path) -> acc.BindingPlan:
+    return acc.plan_bindings(_acc_profile(root), _load_catalog(catalog_path))
+
+
+def _print_acc_plan(plan: acc.BindingPlan) -> None:
+    print("Profile: Live (live)")
+    print(f"File: {plan.profile.controls_path}")
+    print(f"Source SHA-256: {plan.source_hash}")
+    if not plan.changes:
+        print("No changes: all requested shortcuts already match.")
+        return
+    print("Proposed shortcut changes:")
+    for change in plan.changes:
+        print(
+            f"- {change.action_id} -> {change.native_action}: "
+            f"{_format_acc_binding(change.before)} -> "
+            f"{_format_acc_binding(change.after)}"
+        )
+
+
+def _format_acc_binding(binding: acc.NativeBinding) -> str:
+    if binding.binding_type == "button" and binding.native_button_index is not None:
+        return (
+            f"button {binding.native_button_index + 1} "
+            f"(native {binding.native_button_index}) on device {binding.device_index}"
+        )
+    return binding.binding_type
+
+
+def _plan_acc(root: Path | None, catalog_path: Path) -> int:
+    try:
+        plan = _build_acc_plan(root, catalog_path)
+    except (OSError, ValueError, CatalogValidationError) as error:
+        print(f"ACC plan failed: {error}", file=sys.stderr)
+        return 1
+    _print_acc_plan(plan)
+    print("Preview only; no files were changed.")
+    return 0
+
+
+def _apply_acc(
+    root: Path | None,
+    catalog_path: Path,
+    confirmed: bool,
+    allow_active_profile: bool,
+) -> int:
+    try:
+        binding_plan = _build_acc_plan(root, catalog_path)
+        _print_acc_plan(binding_plan)
+        if not binding_plan.changes:
+            return 0
+        if not allow_active_profile:
+            raise ValueError(
+                "refusing to write ACC's live controls file; pass "
+                "--allow-active-profile after reviewing the preview"
+            )
+        if not confirmed:
+            print("Preview only. Re-run with --yes to back up and apply these changes.")
+            return 0
+        file_plan = plan_file_change(
+            binding_plan.profile.controls_path, binding_plan.next_bytes
+        )
+        if file_plan.source_hash != binding_plan.source_hash:
+            raise FileChangeError(
+                "SOURCE_CHANGED", "controls.json changed while the plan was being prepared"
+            )
+        result = apply_file_change(
+            file_plan,
+            _acc_backup_directory(),
+            validate=acc.validate_controls_bytes,
+            is_target_in_use=acc.is_acc_running,
+        )
+    except (OSError, ValueError, CatalogValidationError, FileChangeError) as error:
+        print(f"ACC apply failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Applied with verified backup. Restore receipt: {result.receipt_path}")
+    return 0
+
+
+def _restore_acc(receipt_path: Path, force: bool) -> int:
+    try:
+        result = restore_file(
+            receipt_path,
+            allow_changed_target=force,
+            is_target_in_use=acc.is_acc_running,
+            validate=acc.validate_controls_bytes,
+        )
+    except (OSError, ValueError, FileChangeError) as error:
+        print(f"ACC restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Restore status: {result.status}")
+    return 0
+
+
+def _acc_backup_directory() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "sim-controls-manager" / "backups" / "acc" / "Live"
 
 
 if __name__ == "__main__":

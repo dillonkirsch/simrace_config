@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable, TypeVar
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import assetto_corsa, iracing
+from sim_controls_manager.adapters import acc, assetto_corsa, iracing
 from sim_controls_manager.catalog import ACTIONS, Catalog, validate_catalog
 from sim_controls_manager.control_names import (
     CONTROLS,
@@ -56,6 +56,8 @@ ACTION_LABELS = {
     "tc_decrease": "Traction control −",
 }
 
+TABLET_EXCLUDED_CONTROLS = frozenset(("shift_up", "shift_down"))
+
 
 def _native_control_text(mapping: NativeControlName) -> str:
     """Format one crosswalk cell for the driver-facing control reference."""
@@ -89,6 +91,17 @@ def _matching_control_ids(query: str) -> tuple[str, ...]:
     return tuple(matches)
 
 
+def _matching_tablet_shortcut_ids(query: str) -> tuple[str, ...]:
+    """Return button-style shortcuts suitable for a SimHub tablet dashboard."""
+
+    return tuple(
+        control_id
+        for control_id in _matching_control_ids(query)
+        if CONTROLS[control_id].kind == "button"
+        and control_id not in TABLET_EXCLUDED_CONTROLS
+    )
+
+
 def _binding_text(binding: iracing.NativeBinding | None) -> str:
     if binding is None:
         return "Unavailable"
@@ -115,6 +128,14 @@ def _assetto_corsa_binding_text(
     return binding.binding_type.replace("_", " ").title()
 
 
+def _acc_binding_text(binding: acc.NativeBinding | None) -> str:
+    if binding is None:
+        return "Unavailable"
+    if binding.binding_type == "button" and binding.native_button_index is not None:
+        return f"Button {binding.native_button_index + 1} • Device {binding.device_index}"
+    return binding.binding_type.replace("_", " ").title()
+
+
 def _backup_directory(profile_name: str) -> Path:
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     safe_profile = "".join(
@@ -130,6 +151,11 @@ def _assetto_corsa_backup_directory(profile_name: str) -> Path:
         character if character.isalnum() or character in ("-", "_") else "_"
         for character in profile_name
     )
+
+
+def _acc_backup_directory() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "sim-controls-manager" / "backups" / "acc" / "Live"
     return (
         base
         / "sim-controls-manager"
@@ -158,6 +184,7 @@ def _source_signature(
     simhub_settings: Path | None,
     devices: tuple[iracing.DeviceInfo, ...],
     assetto_corsa_root: Path | None = None,
+    acc_root: Path | None = None,
 ) -> tuple:
     """Fingerprint every external input shown by the GUI without reading its contents."""
 
@@ -191,6 +218,8 @@ def _source_signature(
                 paths.extend(sorted(preset_root.glob("*.ini")))
             except OSError:
                 pass
+    if acc_root is not None:
+        paths.extend((acc_root, acc_root / acc.CONTROLS_FILE))
     device_signature = tuple(
         sorted((device.instance_guid, device.product_guid, device.name) for device in devices)
     )
@@ -210,9 +239,12 @@ class SimControlsApp(tk.Tk):
 
         self.discovery: iracing.DiscoveryResult | None = None
         self.assetto_corsa_discovery: assetto_corsa.DiscoveryResult | None = None
+        self.acc_discovery: acc.DiscoveryResult | None = None
         self.simhub_inspection: simhub.SimHubInspection | None = None
         self.devices: tuple[iracing.DeviceInfo, ...] = ()
-        self.binding_plan: iracing.BindingPlan | assetto_corsa.BindingPlan | None = None
+        self.binding_plan: (
+            iracing.BindingPlan | assetto_corsa.BindingPlan | acc.BindingPlan | None
+        ) = None
         self.binding_plan_game: str | None = None
         self.last_receipt: Path | None = None
         self.busy = False
@@ -223,6 +255,7 @@ class SimControlsApp(tk.Tk):
 
         self.iracing_root = tk.StringVar()
         self.assetto_corsa_root = tk.StringVar()
+        self.acc_root = tk.StringVar()
         self.simhub_settings = tk.StringVar()
         self.game_name = tk.StringVar(value="iRacing")
         self.profile_name = tk.StringVar()
@@ -420,7 +453,7 @@ class SimControlsApp(tk.Tk):
         for index, (page, label) in enumerate(
             (
                 ("dashboard", "  Overview"),
-                ("controls", "  Control names"),
+                ("controls", "  Tablet shortcuts"),
                 ("bindings", "  Bindings"),
                 ("recovery", "  Recovery"),
             ),
@@ -553,23 +586,25 @@ class SimControlsApp(tk.Tk):
 
         status_grid = ttk.Frame(page)
         status_grid.pack(fill="x", pady=14)
-        for column in range(4):
+        for column in range(3):
             status_grid.columnconfigure(column, weight=1, uniform="status")
         self.status_cards: dict[str, tuple[tk.Label, tk.Label]] = {}
         for column, (key, title) in enumerate(
             (
                 ("iracing", "iRACING"),
                 ("assetto_corsa", "ASSETTO CORSA"),
+                ("acc", "ACC"),
                 ("simhub", "SIMHUB"),
                 ("device", "VIRTUAL DEVICE"),
             )
         ):
             outer = ttk.Frame(status_grid, style="Surface.TFrame", padding=18)
             outer.grid(
-                row=0,
-                column=column,
+                row=column // 3,
+                column=column % 3,
                 sticky="nsew",
-                padx=(0 if column == 0 else 5, 0 if column == 3 else 5),
+                padx=(0 if column % 3 == 0 else 5, 0 if column % 3 == 2 else 5),
+                pady=(0 if column < 3 else 10, 0),
             )
             tk.Label(
                 outer,
@@ -613,7 +648,14 @@ class SimControlsApp(tk.Tk):
             self.assetto_corsa_root,
             self._browse_assetto_corsa,
         )
-        self._path_row(paths, 3, "SimHub settings", self.simhub_settings, self._browse_simhub)
+        self._path_row(
+            paths,
+            3,
+            "ACC folder",
+            self.acc_root,
+            self._browse_acc,
+        )
+        self._path_row(paths, 4, "SimHub settings", self.simhub_settings, self._browse_simhub)
 
     def _path_row(
         self,
@@ -653,7 +695,7 @@ class SimControlsApp(tk.Tk):
         self.game_combo = ttk.Combobox(
             selectors,
             textvariable=self.game_name,
-            values=("iRacing", "Assetto Corsa"),
+            values=("iRacing", "Assetto Corsa", "ACC"),
             state="readonly",
         )
         self.game_combo.grid(row=1, column=0, sticky="ew", pady=(6, 0))
@@ -727,13 +769,13 @@ class SimControlsApp(tk.Tk):
     def _build_control_names(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
-            "Control names",
-            "One control vocabulary, with the native name used by each supported simulator.",
+            "Tablet shortcuts",
+            "Button actions for a SimHub tablet or button deck—driving axes, pedals, and shifting are excluded.",
         )
 
         search = self._card(page, fill="x")
         search.columnconfigure(0, weight=1)
-        ttk.Label(search, text="Search controls or native game names", style="Muted.Surface.TLabel").grid(
+        ttk.Label(search, text="Search shortcuts or native game names", style="Muted.Surface.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(search, textvariable=self.control_result_summary, style="Muted.Surface.TLabel").grid(
@@ -784,7 +826,7 @@ class SimControlsApp(tk.Tk):
         self._populate_control_names()
 
     def _populate_control_names(self) -> None:
-        control_ids = _matching_control_ids(self.control_search.get())
+        control_ids = _matching_tablet_shortcut_ids(self.control_search.get())
         self.control_tree.delete(*self.control_tree.get_children())
         for control_id in control_ids:
             values = [CONTROLS[control_id].label]
@@ -793,8 +835,8 @@ class SimControlsApp(tk.Tk):
                 for game_id in GAMES
             )
             self.control_tree.insert("", "end", iid=control_id, values=values)
-        total = len(CONTROLS)
-        self.control_result_summary.set(f"{len(control_ids)} of {total} controls")
+        total = len(_matching_tablet_shortcut_ids(""))
+        self.control_result_summary.set(f"{len(control_ids)} of {total} shortcuts")
         self.control_detail.set(
             "Select a control to see mapping notes. “Not exposed” is verified absence; "
             "“Not observed” means the available game data was inconclusive."
@@ -962,6 +1004,7 @@ class SimControlsApp(tk.Tk):
 
         root_text = self.iracing_root.get().strip()
         ac_root_text = self.assetto_corsa_root.get().strip()
+        acc_root_text = self.acc_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
         root = Path(root_text) if root_text else iracing.detect_iracing_directory()
         ac_root = (
@@ -969,12 +1012,13 @@ class SimControlsApp(tk.Tk):
             if ac_root_text
             else assetto_corsa.detect_assetto_corsa_directory()
         )
+        acc_root = Path(acc_root_text) if acc_root_text else acc.detect_acc_directory()
         settings = Path(settings_text) if settings_text else simhub.default_settings_path()
         self._watch_in_progress = True
 
         def worker() -> None:
             devices, _error = iracing.enumerate_connected_devices()
-            state = _source_signature(root, settings, devices, ac_root)
+            state = _source_signature(root, settings, devices, ac_root, acc_root)
             if not self._closing:
                 self.after(0, lambda: self._watch_complete(state))
 
@@ -1016,11 +1060,13 @@ class SimControlsApp(tk.Tk):
         self._invalidate_preview()
         root_text = self.iracing_root.get().strip()
         ac_root_text = self.assetto_corsa_root.get().strip()
+        acc_root_text = self.acc_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
 
         def task():
             root = Path(root_text) if root_text else None
             ac_root = Path(ac_root_text) if ac_root_text else None
+            acc_root = Path(acc_root_text) if acc_root_text else None
             settings = Path(settings_text) if settings_text else None
             errors = {}
             try:
@@ -1034,6 +1080,11 @@ class SimControlsApp(tk.Tk):
                 ac_discovery = None
                 errors["assetto_corsa"] = str(error)
             try:
+                acc_discovery = acc.discover(acc_root)
+            except Exception as error:
+                acc_discovery = None
+                errors["acc"] = str(error)
+            try:
                 inspection = simhub.inspect_control_mapper(settings)
             except Exception as error:
                 inspection = None
@@ -1045,11 +1096,24 @@ class SimControlsApp(tk.Tk):
             watched_ac_root = (
                 ac_discovery.assetto_corsa_directory if ac_discovery else ac_root
             )
+            watched_acc_root = acc_discovery.acc_directory if acc_discovery else acc_root
             watched_settings = inspection.settings_path if inspection else settings
             state = _source_signature(
-                watched_root, watched_settings, devices, watched_ac_root
+                watched_root,
+                watched_settings,
+                devices,
+                watched_ac_root,
+                watched_acc_root,
             )
-            return discovery, ac_discovery, inspection, devices, errors, state
+            return (
+                discovery,
+                ac_discovery,
+                acc_discovery,
+                inspection,
+                devices,
+                errors,
+                state,
+            )
 
         message = (
             "Syncing changed configuration…"
@@ -1064,6 +1128,7 @@ class SimControlsApp(tk.Tk):
         (
             self.discovery,
             self.assetto_corsa_discovery,
+            self.acc_discovery,
             self.simhub_inspection,
             self.devices,
             errors,
@@ -1094,6 +1159,19 @@ class SimControlsApp(tk.Tk):
                 False,
             )
 
+        if self.acc_discovery:
+            self.acc_root.set(str(self.acc_discovery.acc_directory))
+            acc_names = [profile.name for profile in self.acc_discovery.profiles]
+            detail = f"{len(acc_names)} profile{'s' if len(acc_names) != 1 else ''}"
+            self._set_status_card("acc", "Connected", detail, True)
+        else:
+            self._set_status_card(
+                "acc",
+                "Not found",
+                errors.get("acc", "Choose the ACC folder"),
+                False,
+            )
+
         self._update_profile_choices(previous_profile)
 
         if self.simhub_inspection:
@@ -1117,9 +1195,13 @@ class SimControlsApp(tk.Tk):
             self._set_status_card("device", "Not found", errors.get("device", "Enable SimHub virtual output"), False)
 
         selected_discovery = (
-            self.assetto_corsa_discovery
-            if self.game_name.get() == "Assetto Corsa"
-            else self.discovery
+            self.acc_discovery
+            if self.game_name.get() == "ACC"
+            else (
+                self.assetto_corsa_discovery
+                if self.game_name.get() == "Assetto Corsa"
+                else self.discovery
+            )
         )
         ready = bool(
             selected_discovery
@@ -1143,13 +1225,21 @@ class SimControlsApp(tk.Tk):
         detail_label.configure(text=detail)
 
     def _selected_game_id(self) -> str:
-        return "assetto_corsa" if self.game_name.get() == "Assetto Corsa" else "iracing"
+        if self.game_name.get() == "ACC":
+            return "acc"
+        if self.game_name.get() == "Assetto Corsa":
+            return "assetto_corsa"
+        return "iracing"
 
     def _update_profile_choices(self, preferred: str = "") -> None:
         discovery = (
-            self.assetto_corsa_discovery
-            if self._selected_game_id() == "assetto_corsa"
-            else self.discovery
+            self.acc_discovery
+            if self._selected_game_id() == "acc"
+            else (
+                self.assetto_corsa_discovery
+                if self._selected_game_id() == "assetto_corsa"
+                else self.discovery
+            )
         )
         profiles = discovery.profiles if discovery else ()
         names = [profile.name for profile in profiles]
@@ -1159,17 +1249,25 @@ class SimControlsApp(tk.Tk):
             names[0] if names else "",
         )
         self.profile_name.set(selected)
-        game_label = "ASSETTO CORSA" if self._selected_game_id() == "assetto_corsa" else "iRACING"
+        game_label = {
+            "acc": "ACC",
+            "assetto_corsa": "ASSETTO CORSA",
+            "iracing": "iRACING",
+        }[self._selected_game_id()]
         self.current_binding_heading.set(f"CURRENT {game_label}")
         self.active_ack_label.set(f"I understand this is the active {self.game_name.get()} profile")
 
     def _selected_profile(
         self,
-    ) -> iracing.ProfileCandidate | assetto_corsa.ProfileCandidate:
+    ) -> iracing.ProfileCandidate | assetto_corsa.ProfileCandidate | acc.ProfileCandidate:
         discovery = (
-            self.assetto_corsa_discovery
-            if self._selected_game_id() == "assetto_corsa"
-            else self.discovery
+            self.acc_discovery
+            if self._selected_game_id() == "acc"
+            else (
+                self.assetto_corsa_discovery
+                if self._selected_game_id() == "assetto_corsa"
+                else self.discovery
+            )
         )
         if not discovery:
             raise ValueError(f"Scan {self.game_name.get()} before creating a preview.")
@@ -1231,7 +1329,10 @@ class SimControlsApp(tk.Tk):
 
         def task():
             try:
-                if game_id == "assetto_corsa":
+                if game_id == "acc":
+                    inspection = acc.inspect_profile(profile)
+                    plan = acc.plan_bindings(profile, catalog)
+                elif game_id == "assetto_corsa":
                     inspection = assetto_corsa.inspect_profile(profile)
                     plan = assetto_corsa.plan_bindings(profile, catalog)
                 else:
@@ -1263,9 +1364,13 @@ class SimControlsApp(tk.Tk):
         for action_id, (current, target) in self.binding_rows.items():
             action = by_action.get(action_id)
             binding_text = (
-                _assetto_corsa_binding_text(action.binding if action else None)
-                if self.binding_plan_game == "assetto_corsa"
-                else _binding_text(action.binding if action else None)
+                _acc_binding_text(action.binding if action else None)
+                if self.binding_plan_game == "acc"
+                else (
+                    _assetto_corsa_binding_text(action.binding if action else None)
+                    if self.binding_plan_game == "assetto_corsa"
+                    else _binding_text(action.binding if action else None)
+                )
             )
             current.configure(
                 text=binding_text,
@@ -1318,7 +1423,11 @@ class SimControlsApp(tk.Tk):
         game_id = self.binding_plan_game
         if not plan or not game_id:
             return
-        game_name = "Assetto Corsa" if game_id == "assetto_corsa" else "iRacing"
+        game_name = {
+            "acc": "ACC",
+            "assetto_corsa": "Assetto Corsa",
+            "iracing": "iRacing",
+        }[game_id]
         if not messagebox.askyesno(
             "Apply previewed bindings?",
             f"Apply {len(plan.changes)} binding change(s) to {plan.profile.name}?\n\n"
@@ -1332,6 +1441,13 @@ class SimControlsApp(tk.Tk):
             file_plan = plan_file_change(plan.profile.controls_path, plan.next_bytes)
             if file_plan.source_hash != plan.source_hash:
                 raise FileChangeError("SOURCE_CHANGED", "The profile changed after preview. Create a new preview.")
+            if game_id == "acc":
+                return apply_file_change(
+                    file_plan,
+                    _acc_backup_directory(),
+                    validate=acc.validate_controls_bytes,
+                    is_target_in_use=acc.is_acc_running,
+                )
             if game_id == "assetto_corsa":
                 return apply_file_change(
                     file_plan,
@@ -1381,6 +1497,12 @@ class SimControlsApp(tk.Tk):
             self.assetto_corsa_root.set(path)
             self.scan_setup()
 
+    def _browse_acc(self) -> None:
+        path = filedialog.askdirectory(title="Choose your ACC folder", parent=self)
+        if path:
+            self.acc_root.set(path)
+            self.scan_setup()
+
     def _browse_simhub(self) -> None:
         path = filedialog.askopenfilename(
             title="Choose SimHub Control Mapper settings",
@@ -1393,9 +1515,13 @@ class SimControlsApp(tk.Tk):
 
     def _browse_receipt(self) -> None:
         initial = (
-            _assetto_corsa_backup_directory(self.profile_name.get() or "Live")
-            if self._selected_game_id() == "assetto_corsa"
-            else _backup_directory(self.profile_name.get() or "Legacy")
+            _acc_backup_directory()
+            if self._selected_game_id() == "acc"
+            else (
+                _assetto_corsa_backup_directory(self.profile_name.get() or "Live")
+                if self._selected_game_id() == "assetto_corsa"
+                else _backup_directory(self.profile_name.get() or "Legacy")
+            )
         )
         path = filedialog.askopenfilename(
             title="Choose a restore receipt",
@@ -1435,7 +1561,11 @@ class SimControlsApp(tk.Tk):
             preview = preview_restore(receipt)
             original_path = Path(preview.receipt.originalPath)
             original_name = original_path.name.casefold()
-            if original_path.suffix.casefold() == ".ini":
+            if original_name == "controls.json":
+                game_name = "ACC"
+                process_guard = acc.is_acc_running
+                validator = acc.validate_controls_bytes
+            elif original_path.suffix.casefold() == ".ini":
                 game_name = "Assetto Corsa"
                 process_guard = assetto_corsa.is_assetto_corsa_running
                 validator = assetto_corsa.validate_controls_bytes

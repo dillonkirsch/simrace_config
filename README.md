@@ -38,6 +38,10 @@ Changes are rescanned and re-previewed automatically; they are never applied
 without explicit confirmation. The Recovery screen previews a receipt before
 restoring its backup.
 
+The **Tablet shortcuts** screen is intentionally limited to button actions for
+a SimHub tablet/button-deck workflow. Steering, throttle, brake, clutch,
+handbrake, paddle shifts, and direct gears are excluded from that browser.
+
 ## The problem
 
 A wheel, button box, and Stream Deck may expose different button numbers to every sim. Rebinding `Pit Limiter`, `TC +`, and other actions in each game is repetitive, especially when hardware changes.
@@ -221,6 +225,26 @@ Use a saved test preset by passing `--profile <name>` to plan or apply. Writes
 to the live controls file require both `--yes` and `--allow-active-profile`, and
 Assetto Corsa must be closed. The desktop app exposes the same workflow through
 the simulator selector on the Bindings page.
+
+### Assetto Corsa Competizione adapter
+
+The ACC adapter is shortcut-only: it updates `PitLimiter`, `IncreaseTC`, and
+`DecreaseTC` in the selected non-pedal virtual device's
+`raceCommandButtonList`. It never modifies `raceCommandAxisList`, steering,
+pedal, or shifting data. Existing unrelated JSON fields and device mappings are
+retained, and an occupied virtual button blocks the write.
+
+```powershell
+SimControlsManagerCLI.exe acc discover
+SimControlsManagerCLI.exe acc inspect
+SimControlsManagerCLI.exe acc plan --catalog examples\catalog.example.json
+SimControlsManagerCLI.exe acc apply --catalog examples\catalog.example.json --yes --allow-active-profile
+SimControlsManagerCLI.exe acc restore <receipt-path>
+```
+
+ACC must already list the SimHub virtual controller in `commandDevices`; launch
+the game and select/detect that controller once before applying shortcuts. ACC
+must be closed for apply and restore operations.
 
 ## Windows executable and updates
 
