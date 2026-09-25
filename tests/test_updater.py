@@ -205,7 +205,7 @@ class UpdaterTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             helper = (stage / "apply_update.bat").read_text("utf-8")
-            self.assertIn(str(gui), helper)
+            self.assertIn(str(gui.resolve()), helper)
             self.assertNotIn(f'"{cli}"', helper)
 
 
