@@ -2,10 +2,24 @@
 
 One place to define button actions and apply supported bindings across PC racing simulators.
 
-**Status:** Python proof of concept. SimHub mapping inspection, guarded iRacing
+**Status:** Windows GUI proof of concept. SimHub mapping inspection, guarded iRacing
 three-action writes, verified restore, Windows packaging, and release/self-update
 plumbing are implemented. Real vJoy and in-game validation remain before the
 first adapter is considered complete.
+
+## Desktop app
+
+Launch the modern desktop interface with no arguments:
+
+```powershell
+python -m sim_controls_manager
+```
+
+The app discovers iRacing profiles, reads the three supported SimHub Control
+Mapper roles, lists connected DirectInput controllers, previews exact binding
+changes, and applies them through the same verified backup and rollback path as
+the CLI. The Recovery screen previews a receipt before restoring its backup.
+Changing a profile or controller invalidates the current preview.
 
 ## The problem
 

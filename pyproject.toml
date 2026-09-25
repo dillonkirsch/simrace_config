@@ -17,6 +17,9 @@ build = ["pyinstaller>=6.0"]
 [project.scripts]
 simcontrols = "sim_controls_manager.cli:main"
 
+[project.gui-scripts]
+simcontrols-gui = "sim_controls_manager.gui:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
