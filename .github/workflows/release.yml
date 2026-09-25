@@ -65,6 +65,9 @@ jobs:
       - name: Smoke-test the executable
         shell: pwsh
         run: |
+          $gui = Start-Process -FilePath "dist/SimControlsManager.exe" `
+            -ArgumentList "--smoke-test" -WindowStyle Hidden -Wait -PassThru
+          if ($gui.ExitCode -ne 0) { exit $gui.ExitCode }
           & "dist/SimControlsManagerCLI.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "dist/SimControlsManagerCLI.exe" catalog validate "examples/catalog.example.json"

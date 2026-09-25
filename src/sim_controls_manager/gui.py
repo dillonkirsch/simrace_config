@@ -411,7 +411,12 @@ class SimControlsApp(tk.Tk):
             variable=self.auto_refresh,
             command=self._auto_refresh_changed,
         ).pack(side="left", padx=(0, 12))
-        self.scan_button = self._button(hero, "Refresh now", self.scan_setup, primary=True)
+        self.scan_button = self._button(
+            live_controls,
+            "Refresh now",
+            self.scan_setup,
+            primary=True,
+        )
         self.scan_button.pack(side="left")
 
         status_grid = ttk.Frame(page)
@@ -1056,8 +1061,13 @@ class SimControlsApp(tk.Tk):
         messagebox.showinfo("Restore complete", "The original iRacing controls were restored.", parent=self)
 
 
-def main() -> int:
+def main(*, smoke_test: bool = False) -> int:
     app = SimControlsApp()
+    if smoke_test:
+        app.withdraw()
+        app.update_idletasks()
+        app._close()
+        return 0
     app.mainloop()
     return 0
 

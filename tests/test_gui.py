@@ -1,8 +1,10 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
+from sim_controls_manager import gui
 from sim_controls_manager.gui import _binding_text, _source_signature
 
 
@@ -36,6 +38,15 @@ class GuiFormattingTests(unittest.TestCase):
                 (DeviceInfo("instance", "product", "SimHub vJoy"),),
             )
             self.assertNotEqual(changed_file, with_device)
+
+    def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
+        with mock.patch.object(gui, "SimControlsApp") as app_type:
+            app = app_type.return_value
+            self.assertEqual(gui.main(smoke_test=True), 0)
+        app.withdraw.assert_called_once_with()
+        app.update_idletasks.assert_called_once_with()
+        app._close.assert_called_once_with()
+        app.mainloop.assert_not_called()
 
 
 if __name__ == "__main__":

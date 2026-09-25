@@ -85,6 +85,13 @@ if (-not (Test-Path -LiteralPath $cliExe)) {
 }
 
 # The GUI executable uses the Windows subsystem and intentionally has no console.
+# Build its widget tree once so layout errors fail the build instead of the user.
+$guiProcess = Start-Process -FilePath $exe -ArgumentList "--smoke-test" `
+    -WindowStyle Hidden -Wait -PassThru
+if ($guiProcess.ExitCode -ne 0) {
+    throw "The GUI executable failed its startup smoke test (exit code $($guiProcess.ExitCode))."
+}
+
 # Smoke-test the separate console entry point.
 & $cliExe --version
 if ($LASTEXITCODE -ne 0) {
