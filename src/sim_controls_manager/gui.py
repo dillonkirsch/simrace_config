@@ -14,6 +14,12 @@ from typing import Callable, TypeVar
 from sim_controls_manager import simhub, updater
 from sim_controls_manager.adapters import iracing
 from sim_controls_manager.catalog import ACTIONS, Catalog, validate_catalog
+from sim_controls_manager.control_names import (
+    CONTROLS,
+    GAMES,
+    NATIVE_CONTROL_NAMES,
+    NativeControlName,
+)
 from sim_controls_manager.file_change import (
     FileChangeError,
     apply_file_change,
@@ -49,6 +55,38 @@ ACTION_LABELS = {
     "tc_increase": "Traction control +",
     "tc_decrease": "Traction control −",
 }
+
+
+def _native_control_text(mapping: NativeControlName) -> str:
+    """Format one crosswalk cell for the driver-facing control reference."""
+
+    if mapping.status == "not_exposed":
+        return "Not exposed"
+    if mapping.status == "not_observed":
+        return "Not observed"
+    name = " / ".join(mapping.names)
+    if mapping.status == "compound":
+        return f"{name} (combined)"
+    if mapping.status == "related":
+        return f"{name} (related)"
+    return name
+
+
+def _matching_control_ids(query: str) -> tuple[str, ...]:
+    """Return controls whose central or native names contain ``query``."""
+
+    needle = query.strip().casefold()
+    if not needle:
+        return tuple(CONTROLS)
+    matches = []
+    for control_id, control in CONTROLS.items():
+        terms = [control_id, control.label, control.kind]
+        for game_id, game_name in GAMES.items():
+            mapping = NATIVE_CONTROL_NAMES[game_id][control_id]
+            terms.extend((game_name, mapping.status, *mapping.names))
+        if any(needle in term.casefold() for term in terms):
+            matches.append(control_id)
+    return tuple(matches)
 
 
 def _binding_text(binding: iracing.NativeBinding | None) -> str:
@@ -143,6 +181,9 @@ class SimControlsApp(tk.Tk):
         self.preview_summary = tk.StringVar(value="Scan your setup to begin")
         self.last_refreshed = tk.StringVar(value="Starting live sync…")
         self.receipt_path = tk.StringVar()
+        self.control_search = tk.StringVar()
+        self.control_result_summary = tk.StringVar()
+        self.control_detail = tk.StringVar(value="Select a control to see mapping notes.")
 
         self._configure_styles()
         self._build_shell()
@@ -260,6 +301,37 @@ class SimControlsApp(tk.Tk):
             background=[("active", COLORS["canvas"])],
             foreground=[("active", COLORS["text"])],
         )
+        style.configure(
+            "Control.Treeview",
+            background=COLORS["surface"],
+            fieldbackground=COLORS["surface"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["border"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border"],
+            rowheight=34,
+            font=("Segoe UI", 9),
+        )
+        style.configure(
+            "Control.Treeview.Heading",
+            background=COLORS["raised"],
+            foreground=COLORS["muted"],
+            bordercolor=COLORS["border"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border"],
+            font=("Segoe UI Semibold", 9),
+            padding=(8, 9),
+        )
+        style.map(
+            "Control.Treeview",
+            background=[("selected", COLORS["primary"])],
+            foreground=[("selected", COLORS["text"])],
+        )
+        style.map(
+            "Control.Treeview.Heading",
+            background=[("active", COLORS["raised"])],
+            foreground=[("active", COLORS["text"])],
+        )
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)
@@ -292,7 +364,12 @@ class SimControlsApp(tk.Tk):
 
         self.nav_buttons: dict[str, tk.Button] = {}
         for index, (page, label) in enumerate(
-            (("dashboard", "  Overview"), ("bindings", "  Bindings"), ("recovery", "  Recovery")),
+            (
+                ("dashboard", "  Overview"),
+                ("controls", "  Control names"),
+                ("bindings", "  Bindings"),
+                ("recovery", "  Recovery"),
+            ),
             start=1,
         ):
             button = tk.Button(
@@ -316,7 +393,7 @@ class SimControlsApp(tk.Tk):
 
         version = updater.current_version()
         sidebar_footer = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        sidebar_footer.grid(row=5, column=0, sticky="sew", padx=22, pady=22)
+        sidebar_footer.grid(row=6, column=0, sticky="sew", padx=22, pady=22)
         tk.Label(
             sidebar_footer,
             text="●  LIVE CONFIG SYNC",
@@ -331,7 +408,7 @@ class SimControlsApp(tk.Tk):
             fg=COLORS["subtle"],
             font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(7, 0))
-        sidebar.rowconfigure(4, weight=1)
+        sidebar.rowconfigure(5, weight=1)
 
         content = ttk.Frame(self)
         content.grid(row=0, column=1, sticky="nsew")
@@ -340,12 +417,13 @@ class SimControlsApp(tk.Tk):
         content.rowconfigure(1, minsize=42)
 
         self.pages = {}
-        for name in ("dashboard", "bindings", "recovery"):
+        for name in ("dashboard", "controls", "bindings", "recovery"):
             page = ttk.Frame(content, padding=(34, 28, 34, 14))
             page.grid(row=0, column=0, sticky="nsew")
             self.pages[name] = page
 
         self._build_dashboard(self.pages["dashboard"])
+        self._build_control_names(self.pages["controls"])
         self._build_bindings(self.pages["bindings"])
         self._build_recovery(self.pages["recovery"])
 
@@ -551,6 +629,97 @@ class SimControlsApp(tk.Tk):
         self.preview_button = self._button(actions, "Refresh preview", self.preview_bindings, primary=True)
         self.preview_button.pack(side="right")
         self.apply_button.configure(state="disabled")
+
+    def _build_control_names(self, page: ttk.Frame) -> None:
+        self._page_heading(
+            page,
+            "Control names",
+            "One control vocabulary, with the native name used by each supported simulator.",
+        )
+
+        search = self._card(page, fill="x")
+        search.columnconfigure(0, weight=1)
+        ttk.Label(search, text="Search controls or native game names", style="Muted.Surface.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(search, textvariable=self.control_result_summary, style="Muted.Surface.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(18, 0)
+        )
+        search_entry = ttk.Entry(search, textvariable=self.control_search)
+        search_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(7, 0))
+        search_entry.bind("<KeyRelease>", self._filter_control_names)
+
+        table_card = self._card(page, fill="both", expand=True, pady=(14, 0))
+        table_card.columnconfigure(0, weight=1)
+        table_card.rowconfigure(0, weight=1)
+        columns = ("control", *GAMES)
+        self.control_tree = ttk.Treeview(
+            table_card,
+            columns=columns,
+            show="headings",
+            style="Control.Treeview",
+            selectmode="browse",
+        )
+        self.control_tree.heading("control", text="CONTROL")
+        self.control_tree.column("control", width=220, minwidth=180, stretch=False)
+        for game_id, game_name in GAMES.items():
+            self.control_tree.heading(game_id, text=game_name.upper())
+            self.control_tree.column(game_id, width=210, minwidth=140, stretch=False)
+        self.control_tree.grid(row=0, column=0, sticky="nsew")
+        self.control_tree.bind("<<TreeviewSelect>>", self._control_name_selected)
+
+        vertical = ttk.Scrollbar(table_card, orient="vertical", command=self.control_tree.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(table_card, orient="horizontal", command=self.control_tree.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.control_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
+        tk.Label(
+            table_card,
+            textvariable=self.control_detail,
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 9),
+            justify="left",
+            anchor="w",
+            wraplength=850,
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self._populate_control_names()
+
+    def _filter_control_names(self, _event: tk.Event | None = None) -> None:
+        self._populate_control_names()
+
+    def _populate_control_names(self) -> None:
+        control_ids = _matching_control_ids(self.control_search.get())
+        self.control_tree.delete(*self.control_tree.get_children())
+        for control_id in control_ids:
+            values = [CONTROLS[control_id].label]
+            values.extend(
+                _native_control_text(NATIVE_CONTROL_NAMES[game_id][control_id])
+                for game_id in GAMES
+            )
+            self.control_tree.insert("", "end", iid=control_id, values=values)
+        total = len(CONTROLS)
+        self.control_result_summary.set(f"{len(control_ids)} of {total} controls")
+        self.control_detail.set(
+            "Select a control to see mapping notes. “Not exposed” is verified absence; "
+            "“Not observed” means the available game data was inconclusive."
+        )
+
+    def _control_name_selected(self, _event: tk.Event | None = None) -> None:
+        selection = self.control_tree.selection()
+        if not selection:
+            return
+        control_id = selection[0]
+        control = CONTROLS[control_id]
+        details = [f"{control.label}  •  {control.kind.replace('_', ' ')}  •  {control_id}"]
+        for game_id, game_name in GAMES.items():
+            mapping = NATIVE_CONTROL_NAMES[game_id][control_id]
+            if mapping.note:
+                details.append(f"{game_name}: {mapping.note}")
+        if len(details) == 1:
+            details.append("All listed names are verified exact mappings.")
+        self.control_detail.set("\n".join(details))
 
     def _build_recovery(self, page: ttk.Frame) -> None:
         self._page_heading(

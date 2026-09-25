@@ -5,10 +5,37 @@ from unittest import mock
 
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
 from sim_controls_manager import gui
-from sim_controls_manager.gui import _binding_text, _source_signature
+from sim_controls_manager.control_names import NativeControlName
+from sim_controls_manager.gui import (
+    _binding_text,
+    _matching_control_ids,
+    _native_control_text,
+    _source_signature,
+)
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_formats_native_control_names_and_mapping_statuses(self) -> None:
+        self.assertEqual(_native_control_text(NativeControlName(("Throttle",))), "Throttle")
+        self.assertEqual(
+            _native_control_text(NativeControlName(("Cycle TC",), "compound")),
+            "Cycle TC (combined)",
+        )
+        self.assertEqual(
+            _native_control_text(NativeControlName(status="not_exposed")),
+            "Not exposed",
+        )
+        self.assertEqual(
+            _native_control_text(NativeControlName(status="not_observed")),
+            "Not observed",
+        )
+
+    def test_control_search_matches_central_and_native_names(self) -> None:
+        self.assertIn("accelerator", _matching_control_ids("throttle"))
+        self.assertIn("pit_limiter", _matching_control_ids("pit speed limiter"))
+        self.assertIn("tc_increase", _matching_control_ids("TractionControlInc"))
+        self.assertEqual(_matching_control_ids("not-a-real-control-name"), ())
+
     def test_displays_iracing_zero_based_button_as_user_facing_one_based(self) -> None:
         binding = NativeBinding("button", 6, "instance", "product")
         self.assertEqual(_binding_text(binding), "Button 7")
