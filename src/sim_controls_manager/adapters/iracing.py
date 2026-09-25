@@ -7,12 +7,16 @@ The GFCC layout and active-profile rules are adapted from the MIT-licensed
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import os
+import subprocess
 import struct
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from sim_controls_manager.catalog import Catalog
 
 FOLDERID_DOCUMENTS = "fdd39ad0-238f-46af-adb4-6c85480369c7"
 PROFILE_DIRECTORY = Path("profiles") / "controls"
@@ -26,6 +30,9 @@ ACTION_MAP = {
 }
 TYPE_NAMES = {0: "unbound", 1: "axis", 2: "button", 4: "key"}
 TYPE_IDS = {value: key for key, value in TYPE_NAMES.items()}
+SIM_PROCESS_NAMES = frozenset(
+    ("iracingsim64dx11.exe", "iracingsimav2dx11.exe", "iracingui.exe")
+)
 
 
 class IRacingFormatError(ValueError):
@@ -71,6 +78,29 @@ class ProfileInspection:
     controls_version: int
     actions: tuple[ActionInspection, ...]
     roundtrip_verified: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceInfo:
+    instance_guid: str
+    product_guid: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class BindingChange:
+    action_id: str
+    native_action: str
+    before: NativeBinding
+    after: NativeBinding
+
+
+@dataclass(frozen=True, slots=True)
+class BindingPlan:
+    profile: ProfileCandidate
+    source_hash: str
+    next_bytes: bytes
+    changes: tuple[BindingChange, ...]
 
 
 def control_profile_in_text(app_ini_text: str) -> str | None:
@@ -211,6 +241,88 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     )
 
 
+def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
+    """Prepare an in-memory three-action patch without writing the profile."""
+    device = catalog.virtual_device
+    if device.instance_guid is None or device.product_guid is None:
+        raise ValueError(
+            "catalog must identify a selected DirectInput device with instanceGuid "
+            "and productGuid"
+        )
+    instance_bytes = guid_from_string(device.instance_guid)
+    product_bytes = guid_from_string(device.product_guid)
+    source_bytes = profile.controls_path.read_bytes()
+    document = parse_gfcc(source_bytes)
+    if build_gfcc(document) != source_bytes:
+        raise IRacingFormatError("source controls.cfg did not round-trip byte-exactly")
+
+    entries = document["controls"]["entries"]
+    entries_by_name = {entry["name"]: entry for entry in entries}
+    requested_actions = {binding.action_id for binding in catalog.bindings}
+    unsupported = requested_actions - ACTION_MAP.keys()
+    if unsupported:
+        raise ValueError(f"unsupported iRacing actions: {', '.join(sorted(unsupported))}")
+
+    desired_claims: dict[tuple[bytes, int], str] = {}
+    for binding in catalog.bindings:
+        if binding.virtual_button > 32:
+            raise ValueError(
+                f"{binding.action_id} uses SimHub button {binding.virtual_button}; "
+                "this verified iRacing format supports buttons 1 through 32"
+            )
+        desired_claims[(instance_bytes, 1 << (binding.virtual_button - 1))] = ACTION_MAP[
+            binding.action_id
+        ]
+
+    conflicts: list[str] = []
+    for entry in entries:
+        if entry["binding_type"] != 2:
+            continue
+        claim = (entry["slots"][1], entry["value"])
+        desired_action = desired_claims.get(claim)
+        if desired_action is not None and entry["name"] != desired_action:
+            conflicts.append(
+                f"button is already assigned to native action {entry['name']}"
+            )
+    if conflicts:
+        raise ValueError("; ".join(conflicts))
+
+    changes: list[BindingChange] = []
+    for binding in catalog.bindings:
+        native_action = ACTION_MAP[binding.action_id]
+        entry = entries_by_name.get(native_action)
+        if entry is None:
+            raise IRacingFormatError(
+                f"native action {native_action!r} is missing from this controls format"
+            )
+        if entry["binding_type"] == 1:
+            raise ValueError(
+                f"refusing to replace axis binding for native action {native_action}"
+            )
+        before = _binding_from_entry(entry)
+        entry["binding_type"] = 2
+        entry["value"] = 1 << (binding.virtual_button - 1)
+        entry["modifiers"] = 0
+        entry["slots"] = (ZERO_GUID, instance_bytes, product_bytes)
+        after = _binding_from_entry(entry)
+        if before != after:
+            changes.append(
+                BindingChange(binding.action_id, native_action, before, after)
+            )
+
+    next_bytes = build_gfcc(document)
+    if build_gfcc(parse_gfcc(next_bytes)) != next_bytes:
+        raise IRacingFormatError("planned controls.cfg did not round-trip byte-exactly")
+    from sim_controls_manager.file_change import sha256
+
+    return BindingPlan(
+        profile=profile,
+        source_hash=sha256(source_bytes),
+        next_bytes=next_bytes,
+        changes=tuple(changes),
+    )
+
+
 def parse_gfcc(data: bytes) -> dict[str, Any]:
     """Parse iRacing GFCC bytes while retaining every opaque field."""
     if data[:4] != b"GFCC":
@@ -344,6 +456,153 @@ def guid_to_string(value: bytes) -> str:
         f"{first:08X}-{second:04X}-{third:04X}-"
         f"{value[8:10].hex().upper()}-{value[10:].hex().upper()}"
     )
+
+
+def guid_from_string(value: str) -> bytes:
+    parts = value.strip("{}").split("-")
+    if len(parts) != 5:
+        raise ValueError(f"malformed GUID: {value!r}")
+    try:
+        result = (
+            struct.pack("<IHH", int(parts[0], 16), int(parts[1], 16), int(parts[2], 16))
+            + bytes.fromhex(parts[3])
+            + bytes.fromhex(parts[4])
+        )
+    except (ValueError, struct.error) as error:
+        raise ValueError(f"malformed GUID: {value!r}") from error
+    if len(result) != 16:
+        raise ValueError(f"malformed GUID: {value!r}")
+    return result
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = (
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    )
+
+    def to_string(self) -> str:
+        tail = bytes(self.Data4)
+        return (
+            f"{self.Data1:08X}-{self.Data2:04X}-{self.Data3:04X}-"
+            f"{tail[:2].hex().upper()}-{tail[2:].hex().upper()}"
+        )
+
+
+class _DIDEVICEINSTANCEW(ctypes.Structure):
+    _fields_ = (
+        ("dwSize", wintypes.DWORD),
+        ("guidInstance", _GUID),
+        ("guidProduct", _GUID),
+        ("dwDevType", wintypes.DWORD),
+        ("tszInstanceName", ctypes.c_wchar * 260),
+        ("tszProductName", ctypes.c_wchar * 260),
+        ("guidFFDriver", _GUID),
+        ("wUsagePage", wintypes.WORD),
+        ("wUsage", wintypes.WORD),
+    )
+
+
+def enumerate_connected_devices() -> tuple[tuple[DeviceInfo, ...], str | None]:
+    """Enumerate attached DirectInput controllers using iRacing-compatible GUIDs."""
+    devices: list[DeviceInfo] = []
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+        kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        direct_input = ctypes.windll.dinput8
+        direct_input.DirectInput8Create.restype = ctypes.c_long
+        direct_input.DirectInput8Create.argtypes = (
+            wintypes.HMODULE,
+            wintypes.DWORD,
+            ctypes.POINTER(_GUID),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
+        )
+        interface_id = _guid_structure("BF798031-483A-4DA2-AA99-5D64ED369700")
+        interface = ctypes.c_void_p()
+        result = direct_input.DirectInput8Create(
+            kernel32.GetModuleHandleW(None),
+            0x0800,
+            ctypes.byref(interface_id),
+            ctypes.byref(interface),
+            None,
+        )
+        if result != 0 or not interface:
+            return (), f"DirectInput8Create failed (hr={result:#010x})"
+        table = ctypes.cast(
+            interface, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))
+        ).contents
+        callback_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL,
+            ctypes.POINTER(_DIDEVICEINSTANCEW),
+            ctypes.c_void_p,
+        )
+
+        def on_device(device_pointer, _reference):
+            native = device_pointer.contents
+            devices.append(
+                DeviceInfo(
+                    native.guidInstance.to_string(),
+                    native.guidProduct.to_string(),
+                    native.tszInstanceName,
+                )
+            )
+            return 1
+
+        enumerate_devices = ctypes.WINFUNCTYPE(
+            ctypes.c_long,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            callback_type,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )(table[4])
+        release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(table[2])
+        callback = callback_type(on_device)
+        result = enumerate_devices(interface, 4, callback, None, 1)
+        release(interface)
+        if result != 0:
+            return tuple(devices), f"EnumDevices failed (hr={result:#010x})"
+        return tuple(devices), None
+    except Exception as error:
+        return tuple(devices), f"DirectInput enumeration unavailable: {error}"
+
+
+def is_iracing_running() -> bool:
+    """Return True only for processes that can overwrite live control files."""
+    if os.name != "nt":
+        return False
+    try:
+        result = subprocess.run(
+            ("tasklist", "/FO", "CSV", "/NH"),
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError:
+        return True
+    if result.returncode != 0:
+        return True
+    for line in result.stdout.splitlines():
+        process_name = line.strip().strip('"').split('","', 1)[0].casefold()
+        if process_name in SIM_PROCESS_NAMES:
+            return True
+    return False
+
+
+def _guid_structure(value: str) -> _GUID:
+    raw = guid_from_string(value)
+    first, second, third = struct.unpack_from("<IHH", raw)
+    result = _GUID()
+    result.Data1 = first
+    result.Data2 = second
+    result.Data3 = third
+    result.Data4 = (ctypes.c_ubyte * 8)(*raw[8:])
+    return result
 
 
 def _known_folder(folder_id: str) -> Path | None:

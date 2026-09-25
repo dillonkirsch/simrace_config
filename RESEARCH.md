@@ -4,7 +4,7 @@
 
 | Game | Evidence available | What still needs proof | Current write gate |
 | --- | --- | --- | --- |
-| iRacing | A public controls editor modifies `controls.cfg`; iRacing announced native Control Profiles in May 2026. | Active profile resolution, car-specific precedence, current codec round trip, device identity, in-game loading. | Closed |
+| iRacing | A local 2026.09.10.02 install resolves `Baseline` through `app.ini`, also exposes a `Test` profile, and its GFCC 20/LRTC 8 files pass byte-exact round trips. The three native action records are present. | Select the SimHub DirectInput instance/product GUID, apply only to `Test`, then verify reload and on-track behavior. | Closed pending device and in-game test |
 | Assetto Corsa | Content Manager source manages INI controls and saved presets. | Which live/preset files the game actually loads, action key mapping, formatting preservation. | Closed |
 | Assetto Corsa Competizione | Control JSON files have been observed, but no official schema is established in this research. | Path and profile selection, action IDs, device metadata, unknown field preservation, in-game effect. | Closed |
 | Assetto Corsa EVO | Publisher confirms the move from Documents to `Saved Games/ACE`. | Exact current binding file(s), serialization and versioning, safe read/write, in-game effect. | Closed |

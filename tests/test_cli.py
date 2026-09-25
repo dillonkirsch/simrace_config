@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from sim_controls_manager import cli
+from sim_controls_manager.adapters import iracing
 
 
 class CliTests(unittest.TestCase):
@@ -89,6 +90,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("Could not read catalog", errors.getvalue())
 
+    def test_inspects_simhub_settings_without_writing(self) -> None:
+        path = self.root / "simhub.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "OutputMode": 0,
+                    "VJoyMapping": {"TargetVJoyId": 1},
+                    "OutputMapping": {
+                        "ControllerMapping": {
+                            "Buttons": [
+                                {"ButtonId": 19, "TargetRole": "PitLimiter"},
+                                {"ButtonId": 7, "TargetRole": "TractionControl+"},
+                                {"ButtonId": 6, "TargetRole": "TractionControl-"},
+                            ]
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        before = path.read_bytes()
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            exit_code = cli.main(["simhub", "inspect", "--settings", str(path)])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("pit_limiter -> PitLimiter: SimHub button 20", output.getvalue())
+        self.assertEqual(path.read_bytes(), before)
+
     def test_update_check_output(self) -> None:
         with mock.patch.object(
             cli.updater,
@@ -107,6 +138,94 @@ class CliTests(unittest.TestCase):
                 exit_code = cli.main(["update", "check"])
         self.assertEqual(exit_code, 0)
         self.assertIn("Update available: v0.2.0", output.getvalue())
+
+    def test_iracing_apply_and_restore_end_to_end_on_test_profile(self) -> None:
+        iracing_root = self.root / "iRacing"
+        profile_directory = iracing_root / "profiles" / "controls" / "Test"
+        profile_directory.mkdir(parents=True)
+        controls_path = profile_directory / "controls.cfg"
+        original = _minimal_iracing_controls()
+        controls_path.write_bytes(original)
+        (iracing_root / "app.ini").write_text(
+            "[ControlProfiles]\nGlobal=Baseline\n", encoding="utf-8"
+        )
+        catalog_path = self._write_catalog(
+            {
+                "schemaVersion": 1,
+                "virtualDevice": {
+                    "provider": "simhub-control-mapper",
+                    "identity": "Test virtual output",
+                    "instanceGuid": "11111111-1111-1111-1111-111111111111",
+                    "productGuid": "22222222-2222-2222-2222-222222222222",
+                },
+                "bindings": [
+                    {"actionId": "pit_limiter", "virtualButton": 7},
+                    {"actionId": "tc_increase", "virtualButton": 8},
+                    {"actionId": "tc_decrease", "virtualButton": 9},
+                ],
+            }
+        )
+        backups = self.root / "backups"
+        output = io.StringIO()
+        with (
+            mock.patch.object(cli, "_iracing_backup_directory", return_value=backups),
+            mock.patch.object(cli.iracing, "is_iracing_running", return_value=False),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = cli.main(
+                [
+                    "iracing",
+                    "apply",
+                    "--root",
+                    str(iracing_root),
+                    "--profile",
+                    "Test",
+                    "--catalog",
+                    str(catalog_path),
+                    "--yes",
+                ]
+            )
+        self.assertEqual(exit_code, 0, output.getvalue())
+        self.assertNotEqual(controls_path.read_bytes(), original)
+        self.assertIn("Applied with verified backup", output.getvalue())
+        receipt = next(backups.glob("*-receipt.json"))
+
+        with (
+            mock.patch.object(cli.iracing, "is_iracing_running", return_value=False),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            restore_exit = cli.main(["iracing", "restore", str(receipt)])
+        self.assertEqual(restore_exit, 0)
+        self.assertEqual(controls_path.read_bytes(), original)
+
+
+def _minimal_iracing_controls() -> bytes:
+    zero = b"\x00" * 16
+    entries = []
+    for name, binding_type, value in (
+        ("PitSpeedLimiter", 4, 80),
+        ("TractionControlInc", 0, 0),
+        ("TractionControlDec", 0, 0),
+    ):
+        entries.append(
+            {
+                "name": name,
+                "unknown": 0,
+                "flags": 6,
+                "binding_type": binding_type,
+                "value": value,
+                "modifiers": 0,
+                "slots": (zero, zero, zero),
+            }
+        )
+    return iracing.build_gfcc(
+        {
+            "header": {"version": 20},
+            "global_config": b"test-global-config",
+            "controls": {"version": 8, "entries": entries},
+            "trailer": b"  ",
+        }
+    )
 
 
 if __name__ == "__main__":

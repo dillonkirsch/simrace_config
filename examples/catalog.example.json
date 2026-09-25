@@ -5,9 +5,8 @@
     "identity": "Replace with the exact device identity you selected"
   },
   "bindings": [
-    { "actionId": "pit_limiter", "virtualButton": 7 },
+    { "actionId": "pit_limiter", "virtualButton": 20 },
     { "actionId": "tc_increase", "virtualButton": 8 },
-    { "actionId": "tc_decrease", "virtualButton": 9 }
+    { "actionId": "tc_decrease", "virtualButton": 7 }
   ]
 }
-

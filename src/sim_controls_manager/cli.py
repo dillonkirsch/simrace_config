@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from sim_controls_manager import updater
+from sim_controls_manager import simhub, updater
 from sim_controls_manager.adapters import iracing
 from sim_controls_manager.catalog import CatalogValidationError, validate_catalog
+from sim_controls_manager.file_change import (
+    FileChangeError,
+    apply_file_change,
+    plan_file_change,
+    restore_file,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +33,17 @@ def build_parser() -> argparse.ArgumentParser:
         "validate", help="Validate a catalog without changing it"
     )
     validate.add_argument("path", type=Path)
+
+    simhub_parser = commands.add_parser(
+        "simhub", help="Read SimHub Control Mapper settings"
+    )
+    simhub_commands = simhub_parser.add_subparsers(dest="simhub_command")
+    simhub_inspect = simhub_commands.add_parser(
+        "inspect", help="Inspect the three core role-to-button mappings"
+    )
+    simhub_inspect.add_argument(
+        "--settings", type=Path, help="Exact Control Mapper settings JSON path"
+    )
 
     update = commands.add_parser("update", help="Check for or install app updates")
     update_commands = update.add_subparsers(dest="update_command")
@@ -49,6 +67,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect.add_argument("--root", type=Path, help="Exact Documents\\iRacing path")
     inspect.add_argument("--profile", help="Profile name; defaults to the active profile")
+    iracing_commands.add_parser(
+        "devices", help="List attached DirectInput devices and exact GUIDs"
+    )
+    plan = iracing_commands.add_parser(
+        "plan", help="Preview three-action changes without writing"
+    )
+    _add_iracing_binding_arguments(plan)
+    apply = iracing_commands.add_parser(
+        "apply", help="Preview, back up, and apply three-action changes"
+    )
+    _add_iracing_binding_arguments(apply)
+    apply.add_argument(
+        "--yes", action="store_true", help="Confirm the previewed write"
+    )
+    apply.add_argument(
+        "--allow-active-profile",
+        action="store_true",
+        help="Permit writing the profile currently selected by iRacing",
+    )
+    restore = iracing_commands.add_parser(
+        "restore", help="Restore an iRacing backup receipt"
+    )
+    restore.add_argument("receipt", type=Path)
+    restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite a target changed since apply after reviewing it",
+    )
     return parser
 
 
@@ -61,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "catalog" and args.catalog_command == "validate":
         return _validate_catalog(args.path)
+    if args.command == "simhub" and args.simhub_command == "inspect":
+        return _inspect_simhub(args.settings)
     if args.command == "update" and args.update_command == "check":
         return _check_update(args.as_json)
     if args.command == "update" and args.update_command == "install":
@@ -69,6 +117,20 @@ def main(argv: list[str] | None = None) -> int:
         return _discover_iracing(args.root)
     if args.command == "iracing" and args.iracing_command == "inspect":
         return _inspect_iracing(args.root, args.profile)
+    if args.command == "iracing" and args.iracing_command == "devices":
+        return _list_iracing_devices()
+    if args.command == "iracing" and args.iracing_command == "plan":
+        return _plan_iracing(args.root, args.profile, args.catalog)
+    if args.command == "iracing" and args.iracing_command == "apply":
+        return _apply_iracing(
+            args.root,
+            args.profile,
+            args.catalog,
+            args.yes,
+            args.allow_active_profile,
+        )
+    if args.command == "iracing" and args.iracing_command == "restore":
+        return _restore_iracing(args.receipt, args.force)
 
     parser.error("a subcommand is required")
     return 2
@@ -92,6 +154,30 @@ def _validate_catalog(path: Path) -> int:
     print(f"Bindings: {len(catalog.bindings)}")
     for binding in catalog.bindings:
         print(f"- {binding.action_id}: SimHub button {binding.virtual_button}")
+    return 0
+
+
+def _inspect_simhub(settings: Path | None) -> int:
+    try:
+        inspection = simhub.inspect_control_mapper(settings)
+    except ValueError as error:
+        print(f"SimHub inspection failed: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Settings: {inspection.settings_path}")
+    print(f"Output mode: {inspection.output_mode if inspection.output_mode is not None else 'not set'}")
+    print(
+        "Target vJoy device: "
+        f"{inspection.target_vjoy_id if inspection.target_vjoy_id is not None else 'not set'}"
+    )
+    for binding in inspection.bindings:
+        print(
+            f"- {binding.action_id} -> {binding.role}: "
+            f"SimHub button {binding.virtual_button}"
+        )
+    for action_id in inspection.missing_actions:
+        print(f"- {action_id}: not mapped")
+    print("Read-only inspection complete; no SimHub settings were changed.")
     return 0
 
 
@@ -199,6 +285,154 @@ def _select_iracing_profile(
     if len(discovery.profiles) == 1:
         return discovery.profiles[0]
     raise ValueError("active profile is ambiguous; pass --profile with an exact name")
+
+
+def _add_iracing_binding_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", type=Path, help="Exact Documents\\iRacing path")
+    parser.add_argument("--profile", required=True, help="Exact profile name")
+    parser.add_argument("--catalog", required=True, type=Path)
+
+
+def _list_iracing_devices() -> int:
+    devices, error = iracing.enumerate_connected_devices()
+    if error:
+        print(f"DirectInput warning: {error}", file=sys.stderr)
+    if not devices:
+        print("No attached DirectInput controllers were found.")
+        try:
+            configured = simhub.inspect_control_mapper()
+        except ValueError:
+            configured = None
+        if configured and configured.target_vjoy_id is not None:
+            print(
+                f"SimHub targets vJoy device {configured.target_vjoy_id}, but Windows "
+                "is not exposing that device. Install or enable vJoy, then restart "
+                "SimHub and run this command again."
+            )
+        else:
+            print("Start SimHub and enable its virtual output, then run this command again.")
+        return 1 if error else 0
+    for device in devices:
+        print(device.name)
+        print(f"  instanceGuid: {device.instance_guid}")
+        print(f"  productGuid:  {device.product_guid}")
+    return 0
+
+
+def _load_catalog(path: Path):
+    try:
+        value = json.loads(path.read_text("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Could not read catalog: {error}") from error
+    return validate_catalog(value)
+
+
+def _build_iracing_plan(root: Path | None, profile_name: str, catalog_path: Path):
+    discovery = iracing.discover(root)
+    profile = _select_iracing_profile(discovery, profile_name)
+    catalog = _load_catalog(catalog_path)
+    return iracing.plan_bindings(profile, catalog)
+
+
+def _print_iracing_plan(plan: iracing.BindingPlan) -> None:
+    print(f"Profile: {plan.profile.name}{' (active)' if plan.profile.active else ''}")
+    print(f"File: {plan.profile.controls_path}")
+    print(f"Source SHA-256: {plan.source_hash}")
+    if not plan.changes:
+        print("No changes: all requested bindings already match.")
+        return
+    print("Proposed changes:")
+    for change in plan.changes:
+        print(
+            f"- {change.action_id} -> {change.native_action}: "
+            f"{_format_native_binding(change.before)} -> "
+            f"{_format_native_binding(change.after)}"
+        )
+
+
+def _format_native_binding(binding: iracing.NativeBinding) -> str:
+    if binding.binding_type == "button" and binding.native_button_index is not None:
+        return f"button Btn {binding.native_button_index} on {binding.instance_guid}"
+    return binding.binding_type
+
+
+def _plan_iracing(root: Path | None, profile_name: str, catalog_path: Path) -> int:
+    try:
+        plan = _build_iracing_plan(root, profile_name, catalog_path)
+    except (OSError, ValueError, CatalogValidationError) as error:
+        print(f"iRacing plan failed: {error}", file=sys.stderr)
+        return 1
+    _print_iracing_plan(plan)
+    print("Preview only; no files were changed.")
+    return 0
+
+
+def _apply_iracing(
+    root: Path | None,
+    profile_name: str,
+    catalog_path: Path,
+    confirmed: bool,
+    allow_active_profile: bool,
+) -> int:
+    try:
+        binding_plan = _build_iracing_plan(root, profile_name, catalog_path)
+        _print_iracing_plan(binding_plan)
+        if not binding_plan.changes:
+            return 0
+        if binding_plan.profile.active and not allow_active_profile:
+            raise ValueError(
+                "refusing to write the active profile; select a test profile or pass "
+                "--allow-active-profile after reviewing the preview"
+            )
+        if not confirmed:
+            print("Preview only. Re-run with --yes to back up and apply these changes.")
+            return 0
+        file_plan = plan_file_change(
+            binding_plan.profile.controls_path, binding_plan.next_bytes
+        )
+        if file_plan.source_hash != binding_plan.source_hash:
+            raise FileChangeError(
+                "SOURCE_CHANGED", "controls.cfg changed while the plan was being prepared"
+            )
+        result = apply_file_change(
+            file_plan,
+            _iracing_backup_directory(binding_plan.profile.name),
+            validate=_validate_iracing_bytes,
+            is_target_in_use=iracing.is_iracing_running,
+        )
+    except (OSError, ValueError, CatalogValidationError, FileChangeError) as error:
+        print(f"iRacing apply failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Applied with verified backup. Restore receipt: {result.receipt_path}")
+    return 0
+
+
+def _restore_iracing(receipt_path: Path, force: bool) -> int:
+    try:
+        result = restore_file(
+            receipt_path,
+            allow_changed_target=force,
+            is_target_in_use=iracing.is_iracing_running,
+            validate=_validate_iracing_bytes,
+        )
+    except (OSError, ValueError, FileChangeError) as error:
+        print(f"iRacing restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Restore status: {result.status}")
+    return 0
+
+
+def _validate_iracing_bytes(data: bytes) -> bool:
+    return iracing.build_gfcc(iracing.parse_gfcc(data)) == data
+
+
+def _iracing_backup_directory(profile_name: str) -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    safe_profile = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_"
+        for character in profile_name
+    )
+    return base / "sim-controls-manager" / "backups" / "iracing" / safe_profile
 
 
 if __name__ == "__main__":

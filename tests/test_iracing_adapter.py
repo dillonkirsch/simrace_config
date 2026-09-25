@@ -2,7 +2,9 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from sim_controls_manager.catalog import validate_catalog
 from sim_controls_manager.adapters.iracing import (
     IRacingFormatError,
     ProfileCandidate,
@@ -10,7 +12,9 @@ from sim_controls_manager.adapters.iracing import (
     control_profile_in_text,
     discover,
     inspect_profile,
+    is_iracing_running,
     parse_gfcc,
+    plan_bindings,
 )
 
 
@@ -56,6 +60,31 @@ def synthetic_controls() -> bytes:
         "trailer": b"  ",
     }
     return build_gfcc(document)
+
+
+def selected_catalog(with_guids: bool = True, pit_button: int = 7):
+    device = {
+        "provider": "simhub-control-mapper",
+        "identity": "SimHub virtual output",
+    }
+    if with_guids:
+        device.update(
+            {
+                "instanceGuid": "D94DE5E0-6276-11F1-8001-444553540000",
+                "productGuid": "040DC24F-0076-0000-0000-504944564944",
+            }
+        )
+    return validate_catalog(
+        {
+            "schemaVersion": 1,
+            "virtualDevice": device,
+            "bindings": [
+                {"actionId": "pit_limiter", "virtualButton": pit_button},
+                {"actionId": "tc_increase", "virtualButton": 8},
+                {"actionId": "tc_decrease", "virtualButton": 9},
+            ],
+        }
+    )
 
 
 class IRacingAdapterTests(unittest.TestCase):
@@ -126,6 +155,58 @@ class IRacingAdapterTests(unittest.TestCase):
         data = b"GFCC" + struct.pack("<II", 2, len(payload)) + payload
         with self.assertRaisesRegex(IRacingFormatError, "truncated LRTC"):
             parse_gfcc(data)
+
+    def test_plans_three_bindings_and_second_plan_is_idempotent(self) -> None:
+        controls = self.root / "controls.cfg"
+        source = synthetic_controls()
+        controls.write_bytes(source)
+        profile = ProfileCandidate("Test", controls, False, "control-profile")
+
+        plan = plan_bindings(profile, selected_catalog())
+
+        self.assertEqual([change.action_id for change in plan.changes], [
+            "tc_increase",
+            "tc_decrease",
+        ])
+        self.assertEqual(build_gfcc(parse_gfcc(plan.next_bytes)), plan.next_bytes)
+        self.assertNotEqual(plan.next_bytes, source)
+        controls.write_bytes(plan.next_bytes)
+        second = plan_bindings(profile, selected_catalog())
+        self.assertEqual(second.changes, ())
+        self.assertEqual(second.next_bytes, plan.next_bytes)
+
+    def test_plan_requires_selected_device_guids(self) -> None:
+        controls = self.root / "controls.cfg"
+        controls.write_bytes(synthetic_controls())
+        profile = ProfileCandidate("Test", controls, False, "control-profile")
+        with self.assertRaisesRegex(ValueError, "instanceGuid"):
+            plan_bindings(profile, selected_catalog(with_guids=False))
+
+    def test_plan_detects_existing_button_conflict(self) -> None:
+        controls = self.root / "controls.cfg"
+        document = parse_gfcc(synthetic_controls())
+        source_entry = dict(document["controls"]["entries"][0])
+        source_entry["name"] = "SomeOtherAction"
+        source_entry["value"] = 1 << 4
+        document["controls"]["entries"].append(source_entry)
+        controls.write_bytes(build_gfcc(document))
+        profile = ProfileCandidate("Test", controls, False, "control-profile")
+        with self.assertRaisesRegex(ValueError, "SomeOtherAction"):
+            plan_bindings(profile, selected_catalog(pit_button=5))
+
+    @mock.patch("sim_controls_manager.adapters.iracing.subprocess.run")
+    def test_process_guard_ignores_service_but_blocks_ui(self, run) -> None:
+        run.return_value.returncode = 0
+        run.return_value.stdout = '"iRacingService64.exe","123"\n'
+        self.assertFalse(is_iracing_running())
+        run.return_value.stdout += '"iRacingUI.exe","456"\n'
+        self.assertTrue(is_iracing_running())
+
+    @mock.patch("sim_controls_manager.adapters.iracing.subprocess.run")
+    def test_process_guard_fails_closed_when_tasklist_fails(self, run) -> None:
+        run.return_value.returncode = 1
+        run.return_value.stdout = ""
+        self.assertTrue(is_iracing_running())
 
 
 if __name__ == "__main__":

@@ -44,6 +44,29 @@ class CatalogTests(unittest.TestCase):
         value["bindings"] = []
         self.assertEqual(validate_catalog(value).bindings, ())
 
+    def test_accepts_and_normalizes_selected_device_guids(self) -> None:
+        value = valid_catalog()
+        value["virtualDevice"]["instanceGuid"] = (
+            "d94e0cf0-6276-11f1-8002-444553540000"
+        )
+        value["virtualDevice"]["productGuid"] = (
+            "c24f046d-0000-0000-0000-504944564944"
+        )
+        result = validate_catalog(value)
+        self.assertEqual(
+            result.virtual_device.instance_guid,
+            "D94E0CF0-6276-11F1-8002-444553540000",
+        )
+
+    def test_requires_device_guid_pair(self) -> None:
+        value = valid_catalog()
+        value["virtualDevice"]["instanceGuid"] = (
+            "D94E0CF0-6276-11F1-8002-444553540000"
+        )
+        with self.assertRaises(CatalogValidationError) as caught:
+            validate_catalog(value)
+        self.assertTrue(any("supplied together" in issue for issue in caught.exception.issues))
+
     def test_rejects_duplicate_actions(self) -> None:
         value = valid_catalog()
         value["bindings"][1]["actionId"] = "pit_limiter"

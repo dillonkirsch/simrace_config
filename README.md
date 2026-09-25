@@ -2,9 +2,10 @@
 
 One place to define button actions and apply supported bindings across PC racing simulators.
 
-**Status:** Python proof of concept. Manual catalogs, guarded file operations,
-release/self-update plumbing, and read-only iRacing profile inspection are
-implemented. No game adapter is permitted to write bindings yet.
+**Status:** Python proof of concept. SimHub mapping inspection, guarded iRacing
+three-action writes, verified restore, Windows packaging, and release/self-update
+plumbing are implemented. Real vJoy and in-game validation remain before the
+first adapter is considered complete.
 
 ## The problem
 
@@ -20,13 +21,17 @@ flowchart TD
     M["Sim Controls Manager"] --> A
 ```
 
-The manager initially **reads** the SimHub role-to-button assignment or accepts it from the user; automatically writing SimHub's configuration is a separate research task. Steering, pedals, calibration, and force feedback remain game-native in the initial scope. SimHub documents roles, a vJoy output, and an Arduino bridge: [Control Mapper documentation](https://github.com/SHWotever/SimHub/wiki/Control-Mapper-plugin).
+The manager **reads** the SimHub role-to-button assignment or accepts it from
+the user; automatically writing SimHub's configuration is a separate research
+task. Steering, pedals, calibration, and force feedback remain game-native in
+the initial scope. SimHub documents roles, a vJoy output, and an Arduino bridge:
+[Control Mapper documentation](https://github.com/SHWotever/SimHub/wiki/Control-Mapper-plugin).
 
 ## Target games
 
 | Game | Initial investigation | Planned first level of support |
 | --- | --- | --- |
-| iRacing | Binary control settings and active control profiles | Read-only discovery and inspection implemented; writes remain gated |
+| iRacing | Binary control settings and active control profiles | Guarded three-action preview/apply/restore implemented; real vJoy and in-game verification pending |
 | Assetto Corsa | INI controls and saved presets | Selected buttons |
 | Assetto Corsa Competizione | JSON controls and saved presets | Selected buttons after schema validation |
 | Le Mans Ultimate | JSON input files, GameInput versus DirectInput | Selected buttons after device tests |
@@ -98,8 +103,64 @@ python -m sim_controls_manager iracing inspect --profile Oval
 Discovery handles both legacy top-level `controls.cfg` and current
 `profiles\controls\<name>\controls.cfg` layouts. Inspection must reproduce the
 entire binary file byte-for-byte before it reports `PitSpeedLimiter`,
-`TractionControlInc`, or `TractionControlDec`. This does not yet enable writes;
-device selection and an in-game test are still required.
+`TractionControlInc`, or `TractionControlDec`. Writes require an exact
+DirectInput device identity, a preview, and explicit confirmation.
+
+### Three-action iRacing core
+
+The first writable slice is intentionally limited to:
+
+- `pit_limiter` → `PitSpeedLimiter`
+- `tc_increase` → `TractionControlInc`
+- `tc_decrease` → `TractionControlDec`
+
+Start SimHub and enable its virtual DirectInput output, then list the exact
+device identity iRacing needs:
+
+```powershell
+SimControlsManager.exe simhub inspect
+SimControlsManager.exe iracing devices
+```
+
+`simhub inspect` reads Control Mapper's settings without changing them. On the
+current test rig it detects pit limiter on button 20, TC increase on button 8,
+and TC decrease on button 7. The example catalog contains those verified button
+numbers. `iracing devices` must still see the virtual controller so its exact,
+machine-specific GUIDs can be copied safely.
+
+Copy that device's `instanceGuid` and `productGuid` into the catalog's
+`virtualDevice` object, alongside the three SimHub button numbers:
+
+```json
+{
+  "provider": "simhub-control-mapper",
+  "identity": "Exact device name shown by the devices command",
+  "instanceGuid": "PASTE-INSTANCE-GUID-HERE",
+  "productGuid": "PASTE-PRODUCT-GUID-HERE"
+}
+```
+
+SimHub numbers buttons from 1; the verified iRacing file stores the equivalent
+button index from 0. The adapter performs that conversion explicitly (for
+example, SimHub button 7 previews as iRacing `Btn 6`).
+
+Use a non-active test profile first. Previewing never writes:
+
+```powershell
+SimControlsManager.exe iracing plan --profile Test --catalog examples\catalog.example.json
+```
+
+Applying shows the same preview, rejects conflicts and running iRacing
+processes, writes a verified backup, validates the result, and prints a restore
+receipt:
+
+```powershell
+SimControlsManager.exe iracing apply --profile Test --catalog examples\catalog.example.json --yes
+SimControlsManager.exe iracing restore <receipt-path>
+```
+
+Writing the active profile is blocked unless `--allow-active-profile` is also
+provided. A second apply is a no-op when all three bindings already match.
 
 ## Windows executable and updates
 

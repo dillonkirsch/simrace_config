@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 CATALOG_SCHEMA_VERSION = 1
@@ -16,8 +17,12 @@ ACTIONS = {
 ACTION_IDS = tuple(ACTIONS)
 
 _TOP_LEVEL_KEYS = frozenset(("schemaVersion", "virtualDevice", "bindings"))
-_DEVICE_KEYS = frozenset(("provider", "identity"))
+_DEVICE_KEYS = frozenset(("provider", "identity", "instanceGuid", "productGuid"))
 _BINDING_KEYS = frozenset(("actionId", "virtualButton"))
+_GUID = re.compile(
+    r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+    r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+)
 
 
 class CatalogValidationError(ValueError):
@@ -32,6 +37,8 @@ class CatalogValidationError(ValueError):
 class VirtualDevice:
     provider: str
     identity: str
+    instance_guid: str | None = None
+    product_guid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +83,20 @@ def validate_catalog(value: Any) -> Catalog:
         identity = device.get("identity")
         if not isinstance(identity, str) or not identity.strip():
             issues.append("virtualDevice.identity must be a non-empty string")
+        instance_guid = device.get("instanceGuid")
+        product_guid = device.get("productGuid")
+        if (instance_guid is None) != (product_guid is None):
+            issues.append(
+                "virtualDevice.instanceGuid and productGuid must be supplied together"
+            )
+        for key, guid in (
+            ("instanceGuid", instance_guid),
+            ("productGuid", product_guid),
+        ):
+            if guid is not None and (
+                not isinstance(guid, str) or _GUID.fullmatch(guid) is None
+            ):
+                issues.append(f"virtualDevice.{key} must be a canonical GUID")
 
     bindings_value = value.get("bindings")
     if not isinstance(bindings_value, list):
@@ -136,6 +157,16 @@ def validate_catalog(value: Any) -> Catalog:
         virtual_device=VirtualDevice(
             provider=device["provider"],
             identity=device["identity"].strip(),
+            instance_guid=(
+                device.get("instanceGuid", "").upper()
+                if device.get("instanceGuid")
+                else None
+            ),
+            product_guid=(
+                device.get("productGuid", "").upper()
+                if device.get("productGuid")
+                else None
+            ),
         ),
         bindings=tuple(normalized_bindings),
     )
