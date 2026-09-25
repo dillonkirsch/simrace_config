@@ -198,6 +198,67 @@ class CliTests(unittest.TestCase):
         self.assertEqual(restore_exit, 0)
         self.assertEqual(controls_path.read_bytes(), original)
 
+    def test_assetto_corsa_apply_and_restore_end_to_end(self) -> None:
+        ac_root = self.root / "Assetto Corsa"
+        controls_path = ac_root / "cfg" / "controls.ini"
+        controls_path.parent.mkdir(parents=True)
+        original = _minimal_assetto_corsa_controls()
+        controls_path.write_bytes(original)
+        catalog_path = self._write_catalog(
+            {
+                "schemaVersion": 1,
+                "virtualDevice": {
+                    "provider": "simhub-control-mapper",
+                    "identity": "SimHub Virtual Controller",
+                    "instanceGuid": "11111111-1111-1111-1111-111111111111",
+                    "productGuid": "22222222-2222-2222-2222-222222222222",
+                },
+                "bindings": [
+                    {"actionId": "pit_limiter", "virtualButton": 7},
+                    {"actionId": "tc_increase", "virtualButton": 8},
+                    {"actionId": "tc_decrease", "virtualButton": 9},
+                ],
+            }
+        )
+        backups = self.root / "ac-backups"
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                cli, "_assetto_corsa_backup_directory", return_value=backups
+            ),
+            mock.patch.object(
+                cli.assetto_corsa, "is_assetto_corsa_running", return_value=False
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = cli.main(
+                [
+                    "assetto-corsa",
+                    "apply",
+                    "--root",
+                    str(ac_root),
+                    "--catalog",
+                    str(catalog_path),
+                    "--yes",
+                    "--allow-active-profile",
+                ]
+            )
+        self.assertEqual(exit_code, 0, output.getvalue())
+        self.assertNotEqual(controls_path.read_bytes(), original)
+        self.assertIn("pit_limiter is not exposed", output.getvalue())
+        self.assertIn("Applied with verified backup", output.getvalue())
+        receipt = next(backups.glob("*-receipt.json"))
+
+        with (
+            mock.patch.object(
+                cli.assetto_corsa, "is_assetto_corsa_running", return_value=False
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            restore_exit = cli.main(["assetto-corsa", "restore", str(receipt)])
+        self.assertEqual(restore_exit, 0)
+        self.assertEqual(controls_path.read_bytes(), original)
+
 
 def _minimal_iracing_controls() -> bytes:
     zero = b"\x00" * 16
@@ -226,6 +287,29 @@ def _minimal_iracing_controls() -> bytes:
             "trailer": b"  ",
         }
     )
+
+
+def _minimal_assetto_corsa_controls() -> bytes:
+    return (
+        "[HEADER]\r\n"
+        "INPUT_METHOD=WHEEL\r\n"
+        "\r\n"
+        "[CONTROLLERS]\r\n"
+        "CON0=SimHub Virtual Controller\r\n"
+        "PGUID0=22222222-2222-2222-2222-222222222222\r\n"
+        "\r\n"
+        "[TCUP]\r\n"
+        "JOY=-1\r\n"
+        "BUTTON=-1\r\n"
+        "XBOXBUTTON=-1\r\n"
+        "KEY=-1\r\n"
+        "\r\n"
+        "[TCDN]\r\n"
+        "JOY=-1\r\n"
+        "BUTTON=-1\r\n"
+        "XBOXBUTTON=-1\r\n"
+        "KEY=-1\r\n"
+    ).encode("utf-8")
 
 
 if __name__ == "__main__":

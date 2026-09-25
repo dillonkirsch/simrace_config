@@ -193,6 +193,35 @@ SimControlsManagerCLI.exe iracing restore <receipt-path>
 Writing the active profile is blocked unless `--allow-active-profile` is also
 provided. A second apply is a no-op when all three bindings already match.
 
+### Assetto Corsa adapter
+
+The second adapter discovers the live `cfg\controls.ini` and saved controller
+presets, then losslessly inspects and updates Assetto Corsa's verified traction
+control actions:
+
+- `tc_increase` → `[TCUP]`
+- `tc_decrease` → `[TCDN]`
+
+Assetto Corsa does not expose a pit-limiter action in the inspected control
+vocabulary, so `pit_limiter` is reported as unavailable and is never guessed.
+The adapter resolves the selected virtual controller's `JOY` index from
+`[CONTROLLERS]`, converts SimHub's one-based button number to AC's zero-based
+`BUTTON`, detects existing button and H-shifter conflicts, and preserves the
+original encoding, BOM, line endings, ordering, and unrelated settings.
+
+```powershell
+SimControlsManagerCLI.exe assetto-corsa discover
+SimControlsManagerCLI.exe assetto-corsa inspect
+SimControlsManagerCLI.exe assetto-corsa plan --catalog examples\catalog.example.json
+SimControlsManagerCLI.exe assetto-corsa apply --catalog examples\catalog.example.json --yes --allow-active-profile
+SimControlsManagerCLI.exe assetto-corsa restore <receipt-path>
+```
+
+Use a saved test preset by passing `--profile <name>` to plan or apply. Writes
+to the live controls file require both `--yes` and `--allow-active-profile`, and
+Assetto Corsa must be closed. The desktop app exposes the same workflow through
+the simulator selector on the Bindings page.
+
 ## Windows executable and updates
 
 The release workflow builds a self-contained, windowed

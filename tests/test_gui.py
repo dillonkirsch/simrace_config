@@ -3,11 +3,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+from sim_controls_manager.adapters.assetto_corsa import NativeBinding as ACNativeBinding
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
 from sim_controls_manager import gui
 from sim_controls_manager.control_names import NativeControlName
 from sim_controls_manager.gui import (
     _binding_text,
+    _assetto_corsa_binding_text,
     _matching_control_ids,
     _native_control_text,
     _source_signature,
@@ -15,6 +17,13 @@ from sim_controls_manager.gui import (
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_formats_assetto_corsa_button_as_user_facing_one_based(self) -> None:
+        binding = ACNativeBinding("button", 1, 6, None, None)
+        self.assertEqual(
+            _assetto_corsa_binding_text(binding),
+            "Button 7 • Controller 1",
+        )
+
     def test_formats_native_control_names_and_mapping_statuses(self) -> None:
         self.assertEqual(_native_control_text(NativeControlName(("Throttle",))), "Throttle")
         self.assertEqual(
@@ -65,6 +74,18 @@ class GuiFormattingTests(unittest.TestCase):
                 (DeviceInfo("instance", "product", "SimHub vJoy"),),
             )
             self.assertNotEqual(changed_file, with_device)
+
+            ac_root = root / "Assetto Corsa"
+            ac_controls = ac_root / "cfg" / "controls.ini"
+            ac_controls.parent.mkdir(parents=True)
+            ac_controls.write_text("[CONTROLLERS]\n", encoding="utf-8")
+            with_ac = _source_signature(
+                root,
+                settings,
+                (DeviceInfo("instance", "product", "SimHub vJoy"),),
+                ac_root,
+            )
+            self.assertNotEqual(with_device, with_ac)
 
     def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
         with mock.patch.object(gui, "SimControlsApp") as app_type:

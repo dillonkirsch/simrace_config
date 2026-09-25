@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import iracing
+from sim_controls_manager.adapters import assetto_corsa, iracing
 from sim_controls_manager.catalog import CatalogValidationError, validate_catalog
 from sim_controls_manager.file_change import (
     FileChangeError,
@@ -95,6 +95,52 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite a target changed since apply after reviewing it",
     )
+
+    ac_parser = commands.add_parser(
+        "assetto-corsa",
+        help="Discover, inspect, preview, and safely update Assetto Corsa controls",
+    )
+    ac_commands = ac_parser.add_subparsers(dest="assetto_corsa_command")
+    ac_discover = ac_commands.add_parser(
+        "discover", help="List live controls and saved presets without changing them"
+    )
+    ac_discover.add_argument(
+        "--root", type=Path, help="Exact Documents\\Assetto Corsa path"
+    )
+    ac_inspect = ac_commands.add_parser(
+        "inspect", help="Inspect supported actions in a controls profile"
+    )
+    ac_inspect.add_argument(
+        "--root", type=Path, help="Exact Documents\\Assetto Corsa path"
+    )
+    ac_inspect.add_argument(
+        "--profile", help="Profile name; defaults to the live controls file"
+    )
+    ac_plan = ac_commands.add_parser(
+        "plan", help="Preview supported control changes without writing"
+    )
+    _add_assetto_corsa_binding_arguments(ac_plan)
+    ac_apply = ac_commands.add_parser(
+        "apply", help="Preview, back up, and apply supported control changes"
+    )
+    _add_assetto_corsa_binding_arguments(ac_apply)
+    ac_apply.add_argument(
+        "--yes", action="store_true", help="Confirm the previewed write"
+    )
+    ac_apply.add_argument(
+        "--allow-active-profile",
+        action="store_true",
+        help="Permit writing Assetto Corsa's live controls file",
+    )
+    ac_restore = ac_commands.add_parser(
+        "restore", help="Restore an Assetto Corsa backup receipt"
+    )
+    ac_restore.add_argument("receipt", type=Path)
+    ac_restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite a target changed since apply after reviewing it",
+    )
     return parser
 
 
@@ -131,6 +177,22 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "iracing" and args.iracing_command == "restore":
         return _restore_iracing(args.receipt, args.force)
+    if args.command == "assetto-corsa" and args.assetto_corsa_command == "discover":
+        return _discover_assetto_corsa(args.root)
+    if args.command == "assetto-corsa" and args.assetto_corsa_command == "inspect":
+        return _inspect_assetto_corsa(args.root, args.profile)
+    if args.command == "assetto-corsa" and args.assetto_corsa_command == "plan":
+        return _plan_assetto_corsa(args.root, args.profile, args.catalog)
+    if args.command == "assetto-corsa" and args.assetto_corsa_command == "apply":
+        return _apply_assetto_corsa(
+            args.root,
+            args.profile,
+            args.catalog,
+            args.yes,
+            args.allow_active_profile,
+        )
+    if args.command == "assetto-corsa" and args.assetto_corsa_command == "restore":
+        return _restore_assetto_corsa(args.receipt, args.force)
 
     parser.error("a subcommand is required")
     return 2
@@ -433,6 +495,202 @@ def _iracing_backup_directory(profile_name: str) -> Path:
         for character in profile_name
     )
     return base / "sim-controls-manager" / "backups" / "iracing" / safe_profile
+
+
+def _discover_assetto_corsa(root: Path | None) -> int:
+    try:
+        result = assetto_corsa.discover(root)
+    except OSError as error:
+        print(f"Assetto Corsa discovery failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Assetto Corsa directory: {result.assetto_corsa_directory}")
+    if result.profiles:
+        print("Profiles:")
+        for profile in result.profiles:
+            marker = " (live)" if profile.active else ""
+            print(f"- {profile.name}{marker}: {profile.controls_path}")
+    else:
+        print("Profiles: none")
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+    print("Read-only discovery complete; no files were changed.")
+    return 0
+
+
+def _select_assetto_corsa_profile(
+    discovery: assetto_corsa.DiscoveryResult, requested_profile: str | None
+) -> assetto_corsa.ProfileCandidate:
+    requested = requested_profile or "Live"
+    matches = [
+        profile
+        for profile in discovery.profiles
+        if profile.name.casefold() == requested.casefold()
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"profile {requested!r} was not found or is ambiguous")
+    return matches[0]
+
+
+def _inspect_assetto_corsa(root: Path | None, requested_profile: str | None) -> int:
+    try:
+        discovery = assetto_corsa.discover(root)
+        profile = _select_assetto_corsa_profile(discovery, requested_profile)
+        inspection = assetto_corsa.inspect_profile(profile)
+    except (OSError, ValueError) as error:
+        print(f"Assetto Corsa inspection failed: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Profile: {profile.name}{' (live)' if profile.active else ''}")
+    print(f"File: {profile.controls_path}")
+    print(f"Format: INI ({inspection.encoding}); byte-exact round trip verified")
+    for action in inspection.actions:
+        if action.status != "supported" or action.binding is None:
+            native = f"[{action.native_action}]" if action.native_action else "not exposed"
+            print(f"- {action.action_id} -> {native}: {action.status}")
+            continue
+        print(
+            f"- {action.action_id} -> [{action.native_action}]: "
+            f"{_format_assetto_corsa_binding(action.binding)}"
+        )
+    print("Read-only inspection complete; no files were changed.")
+    return 0
+
+
+def _add_assetto_corsa_binding_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--root", type=Path, help="Exact Documents\\Assetto Corsa path"
+    )
+    parser.add_argument(
+        "--profile", default="Live", help="Exact profile name (default: Live)"
+    )
+    parser.add_argument("--catalog", required=True, type=Path)
+
+
+def _build_assetto_corsa_plan(
+    root: Path | None, profile_name: str, catalog_path: Path
+):
+    discovery = assetto_corsa.discover(root)
+    profile = _select_assetto_corsa_profile(discovery, profile_name)
+    catalog = _load_catalog(catalog_path)
+    return assetto_corsa.plan_bindings(profile, catalog)
+
+
+def _print_assetto_corsa_plan(plan: assetto_corsa.BindingPlan) -> None:
+    print(f"Profile: {plan.profile.name}{' (live)' if plan.profile.active else ''}")
+    print(f"File: {plan.profile.controls_path}")
+    print(f"Source SHA-256: {plan.source_hash}")
+    for action_id in plan.unsupported_actions:
+        print(f"Unavailable: {action_id} is not exposed by Assetto Corsa")
+    if not plan.changes:
+        print("No supported changes: all requested bindings already match.")
+        return
+    print("Proposed changes:")
+    for change in plan.changes:
+        print(
+            f"- {change.action_id} -> [{change.native_action}]: "
+            f"{_format_assetto_corsa_binding(change.before)} -> "
+            f"{_format_assetto_corsa_binding(change.after)}"
+        )
+
+
+def _format_assetto_corsa_binding(binding: assetto_corsa.NativeBinding) -> str:
+    if (
+        binding.binding_type == "button"
+        and binding.joy_index is not None
+        and binding.native_button_index is not None
+    ):
+        return (
+            f"controller {binding.joy_index}, button {binding.native_button_index + 1} "
+            f"(native {binding.native_button_index})"
+        )
+    if binding.binding_type == "key" and binding.key:
+        return f"key {binding.key}"
+    if binding.binding_type == "xbox_button" and binding.xbox_button:
+        return f"Xbox button {binding.xbox_button}"
+    return binding.binding_type
+
+
+def _plan_assetto_corsa(
+    root: Path | None, profile_name: str, catalog_path: Path
+) -> int:
+    try:
+        plan = _build_assetto_corsa_plan(root, profile_name, catalog_path)
+    except (OSError, ValueError, CatalogValidationError) as error:
+        print(f"Assetto Corsa plan failed: {error}", file=sys.stderr)
+        return 1
+    _print_assetto_corsa_plan(plan)
+    print("Preview only; no files were changed.")
+    return 0
+
+
+def _apply_assetto_corsa(
+    root: Path | None,
+    profile_name: str,
+    catalog_path: Path,
+    confirmed: bool,
+    allow_active_profile: bool,
+) -> int:
+    try:
+        binding_plan = _build_assetto_corsa_plan(root, profile_name, catalog_path)
+        _print_assetto_corsa_plan(binding_plan)
+        if not binding_plan.changes:
+            return 0
+        if binding_plan.profile.active and not allow_active_profile:
+            raise ValueError(
+                "refusing to write the live controls file; select a saved test preset "
+                "or pass --allow-active-profile after reviewing the preview"
+            )
+        if not confirmed:
+            print("Preview only. Re-run with --yes to back up and apply these changes.")
+            return 0
+        file_plan = plan_file_change(
+            binding_plan.profile.controls_path, binding_plan.next_bytes
+        )
+        if file_plan.source_hash != binding_plan.source_hash:
+            raise FileChangeError(
+                "SOURCE_CHANGED", "controls.ini changed while the plan was being prepared"
+            )
+        result = apply_file_change(
+            file_plan,
+            _assetto_corsa_backup_directory(binding_plan.profile.name),
+            validate=assetto_corsa.validate_controls_bytes,
+            is_target_in_use=assetto_corsa.is_assetto_corsa_running,
+        )
+    except (OSError, ValueError, CatalogValidationError, FileChangeError) as error:
+        print(f"Assetto Corsa apply failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Applied with verified backup. Restore receipt: {result.receipt_path}")
+    return 0
+
+
+def _restore_assetto_corsa(receipt_path: Path, force: bool) -> int:
+    try:
+        result = restore_file(
+            receipt_path,
+            allow_changed_target=force,
+            is_target_in_use=assetto_corsa.is_assetto_corsa_running,
+            validate=assetto_corsa.validate_controls_bytes,
+        )
+    except (OSError, ValueError, FileChangeError) as error:
+        print(f"Assetto Corsa restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Restore status: {result.status}")
+    return 0
+
+
+def _assetto_corsa_backup_directory(profile_name: str) -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    safe_profile = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_"
+        for character in profile_name
+    )
+    return (
+        base
+        / "sim-controls-manager"
+        / "backups"
+        / "assetto-corsa"
+        / safe_profile
+    )
 
 
 if __name__ == "__main__":
