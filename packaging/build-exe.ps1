@@ -4,25 +4,63 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$python = if (Test-Path ".venv\Scripts\python.exe") {
-    ".venv\Scripts\python.exe"
-} else {
-    "python"
+function Invoke-CheckedPython {
+    param([string[]] $PythonArguments)
+
+    & $script:python @PythonArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python command failed with exit code $LASTEXITCODE`: python $($PythonArguments -join ' ')"
+    }
 }
 
-& $python -m pip install --upgrade pip
-& $python -m pip install -e ".[build]"
+$systemPython = (Get-Command python -ErrorAction Stop).Source
+$venvPython = Join-Path $root ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $venvPython)) {
+    Write-Host "Creating isolated build environment: $root\.venv"
+    & $systemPython -m venv (Join-Path $root ".venv")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not create the build environment (exit code $LASTEXITCODE)."
+    }
+}
+$python = $venvPython
+
+Invoke-CheckedPython @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel")
+Invoke-CheckedPython @("-m", "pip", "install", "-e", ".[build]")
 
 # CI replaces this with the release tag.
 Set-Content -Path "src/sim_controls_manager/_buildinfo.py" `
     -Value 'VERSION = "v0.0.0-dev"' -Encoding utf8
 
-& $python -m PyInstaller --noconfirm --clean `
-    --onefile --console `
-    --name SimControlsManager `
-    packaging\launcher.py
-
 $exe = "dist\SimControlsManager.exe"
+$pyInstallerWork = Join-Path $root ("build\pyinstaller-" + [guid]::NewGuid().ToString("N"))
+if (Test-Path -LiteralPath $exe) {
+    Remove-Item -LiteralPath $exe -Force
+}
+if (Test-Path -LiteralPath "$exe.sha256") {
+    Remove-Item -LiteralPath "$exe.sha256" -Force
+}
+
+Invoke-CheckedPython @(
+    "-m", "PyInstaller",
+    "--noconfirm", "--clean",
+    "--onefile", "--console",
+    "--name", "SimControlsManager",
+    "--paths", "src",
+    "--workpath", $pyInstallerWork,
+    "--specpath", $pyInstallerWork,
+    "--distpath", "dist",
+    "packaging\launcher.py"
+)
+
+if (-not (Test-Path -LiteralPath $exe)) {
+    throw "PyInstaller exited successfully but did not create $exe."
+}
+
+& $exe --version
+if ($LASTEXITCODE -ne 0) {
+    throw "The newly built executable failed its smoke test (exit code $LASTEXITCODE)."
+}
+
 $checksum = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
 "$checksum  SimControlsManager.exe" | Out-File -Encoding ascii "$exe.sha256"
 

@@ -4,8 +4,12 @@ name: Test, Build & Release
 # artifacts without publishing a release.
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -53,6 +57,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean
           --onefile --console
           --name SimControlsManager
+          --paths src
           packaging/launcher.py
 
       - name: Smoke-test the executable
