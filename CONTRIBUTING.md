@@ -19,3 +19,15 @@ The best early contributions are **reproducible game-created control samples** a
 - An in-game check showing the game responds to the new binding after restart.
 
 Keep copyright and licensing of third-party codecs in mind. Link to an external implementation when documenting it; copying code requires a separate license review. A repository license is still to be selected.
+
+## Development checks
+
+Install the project in a Python 3.12+ virtual environment and run:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+The release workflow runs the same tests before building and smoke-testing the
+standalone Windows executable.

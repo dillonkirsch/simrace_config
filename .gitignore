@@ -1,5 +1,17 @@
-node_modules/
-coverage/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
+
+# Generated during local and CI executable builds.
+src/sim_controls_manager/_buildinfo.py
+
 .sim-controls-manager/
 *.tmp
-

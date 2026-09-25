@@ -2,7 +2,9 @@
 
 One place to define button actions and apply supported bindings across PC racing simulators.
 
-**Status:** planning and format research. No game adapter or SimHub automation has been implemented or validated yet.
+**Status:** Python proof of concept. Manual catalogs, guarded file operations,
+release/self-update plumbing, and read-only iRacing profile inspection are
+implemented. No game adapter is permitted to write bindings yet.
 
 ## The problem
 
@@ -24,7 +26,7 @@ The manager initially **reads** the SimHub role-to-button assignment or accepts 
 
 | Game | Initial investigation | Planned first level of support |
 | --- | --- | --- |
-| iRacing | Binary control settings and active control profiles | Validate read/write round trip, then selected buttons |
+| iRacing | Binary control settings and active control profiles | Read-only discovery and inspection implemented; writes remain gated |
 | Assetto Corsa | INI controls and saved presets | Selected buttons |
 | Assetto Corsa Competizione | JSON controls and saved presets | Selected buttons after schema validation |
 | Le Mans Ultimate | JSON input files, GameInput versus DirectInput | Selected buttons after device tests |
@@ -63,10 +65,14 @@ post-write validation, preview a restore, and refuse to overwrite intervening
 changes. It is adapter-independent; no game writes are enabled until a tested
 adapter supplies native-format validation.
 
-Requirements: Node.js 22 or newer. Run the test suite with:
+Requirements for development: Python 3.12 or newer. Create an environment,
+install the project, and run the tests with:
 
 ```powershell
-node --test
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m pytest
 ```
 
 See [`examples/catalog.example.json`](examples/catalog.example.json) for the
@@ -77,8 +83,56 @@ game's verified native convention.
 Validate a catalog without changing it or any game files:
 
 ```powershell
-node src/cli.js catalog validate examples/catalog.example.json
+python -m sim_controls_manager catalog validate examples/catalog.example.json
 ```
+
+The first adapter reuses the proven active-profile and binary-format research
+from the MIT-licensed iRacing Config Tracker. It is intentionally read-only:
+
+```powershell
+python -m sim_controls_manager iracing discover
+python -m sim_controls_manager iracing inspect
+python -m sim_controls_manager iracing inspect --profile Oval
+```
+
+Discovery handles both legacy top-level `controls.cfg` and current
+`profiles\controls\<name>\controls.cfg` layouts. Inspection must reproduce the
+entire binary file byte-for-byte before it reports `PitSpeedLimiter`,
+`TractionControlInc`, or `TractionControlDec`. This does not yet enable writes;
+device selection and an in-game test are still required.
+
+## Windows executable and updates
+
+The release workflow builds a self-contained, console-based
+`SimControlsManager.exe` with PyInstaller. End users do not need Python. A
+version tag publishes the executable and its SHA-256 checksum to a GitHub
+Release:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow can also be run manually from GitHub's **Actions** tab; manual
+runs produce downloadable build artifacts without publishing a release. Build
+the same files locally with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build-exe.ps1
+```
+
+The packaged executable checks the latest release or installs it with:
+
+```powershell
+SimControlsManager.exe update check
+SimControlsManager.exe update install
+```
+
+Installation is only enabled in the packaged executable. It requires both
+`SimControlsManager.exe` and `SimControlsManager.exe.sha256` from the release,
+verifies the checksum, replaces the executable after the current process
+closes, and relaunches it. An executable in a protected directory prompts for
+administrator permission only when replacement requires it.
 
 ## First milestone
 
@@ -92,3 +146,4 @@ Build a Windows proof of concept for **one game and three button actions**: disc
 - [iRacing's May 2026 development update](https://www.iracing.com/iracing-development-update-may-2026/) announces native control profiles.
 
 This is an independent project and is not affiliated with the game or hardware vendors. No license has been chosen yet; select one after reviewing dependencies and any code reused from other projects.
+See [third-party notices](THIRD_PARTY_NOTICES.md) for reused MIT-licensed work.
