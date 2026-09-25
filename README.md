@@ -2,6 +2,20 @@
 
 One place to define button actions and apply supported bindings across PC racing simulators.
 
+The normalized control vocabulary across all six inventoried simulators is
+documented in [BASIC_CONTROL_MAP.md](BASIC_CONTROL_MAP.md) and
+[COMMON_CONTROL_MAP.md](COMMON_CONTROL_MAP.md), with the third 50-control batch
+in [ADVANCED_CONTROL_MAP.md](ADVANCED_CONTROL_MAP.md). Completed and remaining
+work is tracked in [CONTROL_MAPPING_STATUS.md](CONTROL_MAPPING_STATUS.md).
+Batch 4 is in [TUNING_CONTROL_MAP.md](TUNING_CONTROL_MAP.md), and Batch 5 is in
+[SYSTEM_CONTROL_MAP.md](SYSTEM_CONTROL_MAP.md). The final core/utility batch is
+in [CORE_UTILITY_CONTROL_MAP.md](CORE_UTILITY_CONTROL_MAP.md). The
+positional/extended batch is in
+[EXTENDED_CONTROL_MAP.md](EXTENDED_CONTROL_MAP.md), and the camera batch is in
+[CAMERA_CONTROL_MAP.md](CAMERA_CONTROL_MAP.md). The final advanced camera and
+replay batch is in [MEDIA_CONTROL_MAP.md](MEDIA_CONTROL_MAP.md). The full
+structured vocabulary is available from `sim_controls_manager.control_names`.
+
 **Status:** Windows GUI proof of concept. SimHub mapping inspection, guarded iRacing
 three-action writes, verified restore, Windows packaging, and release/self-update
 plumbing are implemented. Real vJoy and in-game validation remain before the

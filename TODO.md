@@ -31,6 +31,8 @@ Status key: `[ ]` pending, `[x]` complete. Mark work done only after verificatio
 ## Milestone 3 — usable Windows app
 
 - [x] Add action-oriented mapping screen, game/profile selection, and per-game status.
+- [ ] Build a GUI that guides users through configuring their setup and exporting it to SimHub.
+- [ ] Add a scan feature that detects newly available game features or actions and flags anything not yet mapped.
 - [ ] Add an input-listening wizard; distinguish physical input from SimHub virtual output.
 - [ ] Add export/import and a full local backup browser. (Receipt selection and restore preview are implemented.)
 - [ ] Test unplug/replug, game update, profile switch, interrupted write, and cloud-synced folders.
