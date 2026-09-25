@@ -18,9 +18,10 @@
 
 The proof of concept is a Python 3.12+ package with no third-party runtime
 dependencies. PyInstaller produces a one-file Windows console executable.
-Version tags run tests, build and smoke-test the executable, generate a SHA-256
-checksum, and publish both files in a GitHub Release. The packaged updater
-requires that checksum before it stages an in-place replacement and relaunch.
+Pushes to `main`/`master` and version tags run tests, build and smoke-test the
+executable, generate a SHA-256 checksum, and publish both files in a GitHub
+Release. The packaged updater requires that checksum before it stages an
+in-place replacement and relaunch.
 
 The UI toolkit remains an open decision; the domain, adapter, safety, and
 updater modules are intentionally independent of a particular desktop UI.

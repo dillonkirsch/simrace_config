@@ -1,7 +1,7 @@
 name: Test, Build & Release
 
-# Version tags publish a GitHub Release. Manual runs build downloadable
-# artifacts without publishing a release.
+# Successful pushes to main/master and version tags publish a GitHub Release.
+# Pull requests and manual runs only build downloadable artifacts.
 on:
   push:
     branches:
@@ -77,7 +77,7 @@ jobs:
 
       - name: Write release notes
         id: notes
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -105,11 +105,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           body: ${{ steps.notes.outputs.notes }}
           fail_on_unmatched_files: true
           files: |

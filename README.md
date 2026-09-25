@@ -166,17 +166,18 @@ provided. A second apply is a no-op when all three bindings already match.
 
 The release workflow builds a self-contained, console-based
 `SimControlsManager.exe` with PyInstaller. End users do not need Python. A
-version tag publishes the executable and its SHA-256 checksum to a GitHub
-Release:
+successful push to `main` or `master` publishes the executable and its SHA-256
+checksum to a GitHub Release, using an automatic version such as `v0.1.42`.
+Pushing an explicit version tag publishes that version instead:
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow can also be run manually from GitHub's **Actions** tab; manual
-runs produce downloadable build artifacts without publishing a release. Build
-the same files locally with:
+Pull requests and manual runs from GitHub's **Actions** tab produce downloadable
+build artifacts without publishing a release. Build the same files locally
+with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\build-exe.ps1
