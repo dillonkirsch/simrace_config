@@ -57,6 +57,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean
           --onefile --console
           --name SimControlsManager
+          --icon packaging/assets/sim-controls-manager.ico
           --paths src
           packaging/launcher.py
 
