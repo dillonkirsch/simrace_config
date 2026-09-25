@@ -195,9 +195,9 @@ def _check_update(as_json: bool) -> int:
         if not result.get("assets_valid"):
             print("The release cannot be installed automatically because an asset is missing.")
         elif not result.get("can_apply"):
-            print("Run the packaged SimControlsManager.exe to install it automatically.")
+            print("Run the packaged SimControlsManagerCLI.exe to install it automatically.")
         else:
-            print("Run 'SimControlsManager.exe update install' to install and relaunch.")
+            print("Run 'SimControlsManagerCLI.exe update install' to install and relaunch.")
     else:
         print(f"Already up to date ({result.get('current')}).")
     return 0 if result.get("ok") else 1

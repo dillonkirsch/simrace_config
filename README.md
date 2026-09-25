@@ -32,8 +32,11 @@ python -m sim_controls_manager
 The app discovers iRacing profiles, reads the three supported SimHub Control
 Mapper roles, lists connected DirectInput controllers, previews exact binding
 changes, and applies them through the same verified backup and rollback path as
-the CLI. The Recovery screen previews a receipt before restoring its backup.
-Changing a profile or controller invalidates the current preview.
+the CLI. Live sync watches the SimHub settings file, iRacing profile files and
+active-profile selector, and connected controller identities every few seconds.
+Changes are rescanned and re-previewed automatically; they are never applied
+without explicit confirmation. The Recovery screen previews a receipt before
+restoring its backup.
 
 ## The problem
 
@@ -146,8 +149,8 @@ Start SimHub and enable its virtual DirectInput output, then list the exact
 device identity iRacing needs:
 
 ```powershell
-SimControlsManager.exe simhub inspect
-SimControlsManager.exe iracing devices
+SimControlsManagerCLI.exe simhub inspect
+SimControlsManagerCLI.exe iracing devices
 ```
 
 `simhub inspect` reads Control Mapper's settings without changing them. On the
@@ -175,7 +178,7 @@ example, SimHub button 7 previews as iRacing `Btn 6`).
 Use a non-active test profile first. Previewing never writes:
 
 ```powershell
-SimControlsManager.exe iracing plan --profile Test --catalog examples\catalog.example.json
+SimControlsManagerCLI.exe iracing plan --profile Test --catalog examples\catalog.example.json
 ```
 
 Applying shows the same preview, rejects conflicts and running iRacing
@@ -183,8 +186,8 @@ processes, writes a verified backup, validates the result, and prints a restore
 receipt:
 
 ```powershell
-SimControlsManager.exe iracing apply --profile Test --catalog examples\catalog.example.json --yes
-SimControlsManager.exe iracing restore <receipt-path>
+SimControlsManagerCLI.exe iracing apply --profile Test --catalog examples\catalog.example.json --yes
+SimControlsManagerCLI.exe iracing restore <receipt-path>
 ```
 
 Writing the active profile is blocked unless `--allow-active-profile` is also
@@ -192,10 +195,12 @@ provided. A second apply is a no-op when all three bindings already match.
 
 ## Windows executable and updates
 
-The release workflow builds a self-contained, console-based
-`SimControlsManager.exe` with PyInstaller. End users do not need Python. A
-successful push to `main` or `master` publishes the executable and its SHA-256
-checksum to a GitHub Release, using an automatic version such as `v0.1.42`.
+The release workflow builds a self-contained, windowed
+`SimControlsManager.exe` with PyInstaller. It opens only the app—there is no
+extra console window. The release also includes `SimControlsManagerCLI.exe` for
+command-line workflows. End users do not need Python. A successful push to
+`main` or `master` publishes both executables and their SHA-256 checksums to a
+GitHub Release, using an automatic version such as `v0.1.42`.
 Pushing an explicit version tag publishes that version instead:
 
 ```powershell
@@ -214,8 +219,8 @@ powershell -ExecutionPolicy Bypass -File packaging\build-exe.ps1
 The packaged executable checks the latest release or installs it with:
 
 ```powershell
-SimControlsManager.exe update check
-SimControlsManager.exe update install
+SimControlsManagerCLI.exe update check
+SimControlsManagerCLI.exe update install
 ```
 
 Installation is only enabled in the packaged executable. It requires both

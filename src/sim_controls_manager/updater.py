@@ -17,6 +17,7 @@ from pathlib import Path
 REPO = "dillonkirsch/simrace_config"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 EXE_NAME = "SimControlsManager.exe"
+CLI_EXE_NAME = "SimControlsManagerCLI.exe"
 _USER_AGENT = "sim-controls-manager-updater"
 _REQUEST_HEADERS = {
     "User-Agent": _USER_AGENT,
@@ -169,7 +170,12 @@ def apply_update(exe_url: str, sha_url: str) -> dict:
     if not _allowed_download_url(exe_url) or not _allowed_download_url(sha_url):
         return {"ok": False, "error": "Update assets must be HTTPS GitHub URLs."}
 
-    current_executable = Path(sys.executable).resolve()
+    running_executable = Path(sys.executable).resolve()
+    current_executable = (
+        running_executable.with_name(EXE_NAME)
+        if running_executable.name.lower() == CLI_EXE_NAME.lower()
+        else running_executable
+    )
     stage = Path(tempfile.mkdtemp(prefix="sim-controls-manager-update-"))
     new_executable = stage / EXE_NAME
     checksum_file = stage / (EXE_NAME + ".sha256")

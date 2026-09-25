@@ -172,6 +172,42 @@ class UpdaterTests(unittest.TestCase):
             self.assertTrue((stage / "apply_update.bat").is_file())
             popen.assert_called_once()
 
+    def test_cli_updater_targets_the_windowed_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gui = root / updater.EXE_NAME
+            gui.write_bytes(b"MZcurrent")
+            cli = root / updater.CLI_EXE_NAME
+            cli.write_bytes(b"MZcli")
+            stage = root / "stage"
+            stage.mkdir()
+            new_bytes = b"MZnew executable"
+            checksum = hashlib.sha256(new_bytes).hexdigest()
+
+            def fake_download(_url, destination, _max_bytes):
+                if destination.name.endswith(".sha256"):
+                    destination.write_text(checksum, encoding="ascii")
+                else:
+                    destination.write_bytes(new_bytes)
+
+            with (
+                mock.patch.object(updater, "is_frozen", return_value=True),
+                mock.patch.object(updater.sys, "executable", str(cli)),
+                mock.patch.object(updater.tempfile, "mkdtemp", return_value=str(stage)),
+                mock.patch.object(updater, "_download", side_effect=fake_download),
+                mock.patch.object(updater, "_dir_writable", return_value=True),
+                mock.patch.object(updater.subprocess, "Popen"),
+            ):
+                result = updater.apply_update(
+                    "https://github.com/example/app.exe",
+                    "https://github.com/example/app.exe.sha256",
+                )
+
+            self.assertTrue(result["ok"])
+            helper = (stage / "apply_update.bat").read_text("utf-8")
+            self.assertIn(str(gui), helper)
+            self.assertNotIn(f'"{cli}"', helper)
+
 
 if __name__ == "__main__":
     unittest.main()

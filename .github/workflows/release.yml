@@ -53,21 +53,23 @@ jobs:
         run: python -m pytest
 
       - name: Build the executable
-        run: >
-          python -m PyInstaller --noconfirm --clean
-          --onefile --console
-          --name SimControlsManager
-          --icon packaging/assets/sim-controls-manager.ico
-          --paths src
-          packaging/launcher.py
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed `
+            --name SimControlsManager --icon packaging/assets/sim-controls-manager.ico `
+            --paths src packaging/launcher.py
+          python -m PyInstaller --noconfirm --clean --onefile --console `
+            --name SimControlsManagerCLI --icon packaging/assets/sim-controls-manager.ico `
+            --paths src packaging/cli_launcher.py
 
       - name: Smoke-test the executable
         shell: pwsh
         run: |
-          & "dist/SimControlsManager.exe" --version
+          & "dist/SimControlsManagerCLI.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "dist/SimControlsManager.exe" catalog validate "examples/catalog.example.json"
+          & "dist/SimControlsManagerCLI.exe" catalog validate "examples/catalog.example.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/SimControlsManager.exe")) { exit 1 }
 
       - name: Generate SHA-256 checksum
         shell: pwsh
@@ -75,6 +77,9 @@ jobs:
           $exe = "dist/SimControlsManager.exe"
           (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() + "  SimControlsManager.exe" `
             | Out-File -Encoding ascii "dist/SimControlsManager.exe.sha256"
+          $cli = "dist/SimControlsManagerCLI.exe"
+          (Get-FileHash $cli -Algorithm SHA256).Hash.ToLower() + "  SimControlsManagerCLI.exe" `
+            | Out-File -Encoding ascii "dist/SimControlsManagerCLI.exe.sha256"
 
       - name: Write release notes
         id: notes
@@ -103,6 +108,8 @@ jobs:
           path: |
             dist/SimControlsManager.exe
             dist/SimControlsManager.exe.sha256
+            dist/SimControlsManagerCLI.exe
+            dist/SimControlsManagerCLI.exe.sha256
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -117,3 +124,5 @@ jobs:
           files: |
             dist/SimControlsManager.exe
             dist/SimControlsManager.exe.sha256
+            dist/SimControlsManagerCLI.exe
+            dist/SimControlsManagerCLI.exe.sha256

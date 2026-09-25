@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, TypeVar
@@ -25,20 +26,23 @@ T = TypeVar("T")
 
 
 COLORS = {
-    "canvas": "#0B0F14",
-    "sidebar": "#0E141C",
-    "surface": "#121A24",
-    "raised": "#192432",
-    "border": "#263446",
-    "text": "#F4F7FA",
-    "muted": "#8FA1B5",
-    "subtle": "#617489",
-    "accent": "#55D6BE",
-    "primary": "#4F8CFF",
-    "primary_hover": "#70A3FF",
-    "warning": "#F2B84B",
-    "danger": "#F06A6A",
+    "canvas": "#0A0F17",
+    "sidebar": "#070B11",
+    "surface": "#111A26",
+    "raised": "#192536",
+    "border": "#25344A",
+    "text": "#F6F8FC",
+    "muted": "#9AAAC0",
+    "subtle": "#66788F",
+    "accent": "#42D7B6",
+    "accent_soft": "#143A35",
+    "primary": "#4C84FF",
+    "primary_hover": "#6B9AFF",
+    "warning": "#F5B84B",
+    "danger": "#F06D76",
 }
+
+AUTO_REFRESH_MS = 2500
 
 ACTION_LABELS = {
     "pit_limiter": "Pit limiter",
@@ -68,14 +72,53 @@ def _validate_iracing_bytes(data: bytes) -> bool:
     return iracing.build_gfcc(iracing.parse_gfcc(data)) == data
 
 
+def _path_signature(path: Path) -> tuple[str, int | None, int | None]:
+    """Return a cheap, stable fingerprint for a watched file or directory."""
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return str(path), None, None
+    return str(path), stat.st_mtime_ns, stat.st_size
+
+
+def _source_signature(
+    iracing_root: Path | None,
+    simhub_settings: Path | None,
+    devices: tuple[iracing.DeviceInfo, ...],
+) -> tuple:
+    """Fingerprint every external input shown by the GUI without reading its contents."""
+
+    paths: list[Path] = []
+    if iracing_root is not None:
+        paths.extend((iracing_root, iracing_root / "app.ini", iracing_root / "controls.cfg"))
+        profile_root = iracing_root / iracing.PROFILE_DIRECTORY
+        paths.append(profile_root)
+        if profile_root.is_dir():
+            try:
+                paths.extend(
+                    directory / "controls.cfg"
+                    for directory in sorted(profile_root.iterdir(), key=lambda item: item.name.lower())
+                    if directory.is_dir()
+                )
+            except OSError:
+                pass
+    if simhub_settings is not None:
+        paths.append(simhub_settings)
+    device_signature = tuple(
+        sorted((device.instance_guid, device.product_guid, device.name) for device in devices)
+    )
+    return tuple(_path_signature(path) for path in paths), device_signature
+
+
 class SimControlsApp(tk.Tk):
     """Single-window, preview-first desktop workflow."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title("Sim Controls Manager")
-        self.geometry("1180x760")
-        self.minsize(1040, 680)
+        self.geometry("1220x790")
+        self.minsize(1060, 700)
         self.configure(bg=COLORS["canvas"])
         self._set_icon()
 
@@ -85,19 +128,27 @@ class SimControlsApp(tk.Tk):
         self.binding_plan: iracing.BindingPlan | None = None
         self.last_receipt: Path | None = None
         self.busy = False
+        self._closing = False
+        self._watch_in_progress = False
+        self._source_state: tuple | None = None
+        self._watch_after_id: str | None = None
 
         self.iracing_root = tk.StringVar()
         self.simhub_settings = tk.StringVar()
         self.profile_name = tk.StringVar()
         self.device_name = tk.StringVar()
         self.active_ack = tk.BooleanVar(value=False)
+        self.auto_refresh = tk.BooleanVar(value=True)
         self.footer_status = tk.StringVar(value="Ready to scan your setup")
         self.preview_summary = tk.StringVar(value="Scan your setup to begin")
+        self.last_refreshed = tk.StringVar(value="Starting live sync…")
         self.receipt_path = tk.StringVar()
 
         self._configure_styles()
         self._build_shell()
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(200, self.scan_setup)
+        self._schedule_watch()
 
     def _set_icon(self) -> None:
         candidates = []
@@ -198,38 +249,50 @@ class SimControlsApp(tk.Tk):
             background=[("active", COLORS["surface"])],
             foreground=[("active", COLORS["text"])],
         )
+        style.configure(
+            "Live.TCheckbutton",
+            background=COLORS["canvas"],
+            foreground=COLORS["muted"],
+            font=("Segoe UI Semibold", 9),
+        )
+        style.map(
+            "Live.TCheckbutton",
+            background=[("active", COLORS["canvas"])],
+            foreground=[("active", COLORS["text"])],
+        )
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=220)
+        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=238)
         sidebar.grid(row=0, column=0, sticky="nsw")
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
 
         brand = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(26, 34))
+        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(28, 38))
         tk.Label(
             brand,
-            text="SC",
-            bg=COLORS["accent"],
-            fg=COLORS["canvas"],
+            text="S",
+            bg=COLORS["primary"],
+            fg=COLORS["text"],
             font=("Segoe UI Semibold", 12),
             width=3,
-            height=1,
+            height=2,
         ).pack(side="left", padx=(0, 12))
         tk.Label(
             brand,
-            text="SIM CONTROLS",
+            text="SIM CONTROLS\nMANAGER",
             bg=COLORS["sidebar"],
             fg=COLORS["text"],
-            font=("Segoe UI Semibold", 10),
+            font=("Segoe UI Semibold", 9),
+            justify="left",
         ).pack(side="left")
 
         self.nav_buttons: dict[str, tk.Button] = {}
         for index, (page, label) in enumerate(
-            (("dashboard", "Overview"), ("bindings", "Bindings"), ("recovery", "Recovery")),
+            (("dashboard", "  Overview"), ("bindings", "  Bindings"), ("recovery", "  Recovery")),
             start=1,
         ):
             button = tk.Button(
@@ -243,8 +306,8 @@ class SimControlsApp(tk.Tk):
                 activeforeground=COLORS["text"],
                 relief="flat",
                 bd=0,
-                padx=22,
-                pady=13,
+                padx=18,
+                pady=14,
                 font=("Segoe UI Semibold", 10),
                 cursor="hand2",
             )
@@ -252,13 +315,22 @@ class SimControlsApp(tk.Tk):
             self.nav_buttons[page] = button
 
         version = updater.current_version()
+        sidebar_footer = tk.Frame(sidebar, bg=COLORS["sidebar"])
+        sidebar_footer.grid(row=5, column=0, sticky="sew", padx=22, pady=22)
         tk.Label(
-            sidebar,
-            text=f"Preview-first • {version}",
+            sidebar_footer,
+            text="●  LIVE CONFIG SYNC",
+            bg=COLORS["sidebar"],
+            fg=COLORS["accent"],
+            font=("Segoe UI Semibold", 8),
+        ).pack(anchor="w")
+        tk.Label(
+            sidebar_footer,
+            text=f"Safe preview workflow  •  {version}",
             bg=COLORS["sidebar"],
             fg=COLORS["subtle"],
             font=("Segoe UI", 8),
-        ).grid(row=5, column=0, sticky="sw", padx=22, pady=22)
+        ).pack(anchor="w", pady=(7, 0))
         sidebar.rowconfigure(4, weight=1)
 
         content = ttk.Frame(self)
@@ -311,14 +383,14 @@ class SimControlsApp(tk.Tk):
     def _build_dashboard(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
-            "Your racing controls, in one place",
-            "Connect the pieces once. Preview every change before it reaches the sim.",
+            "Control center",
+            "Your iRacing profiles and SimHub mappings stay in sync automatically.",
         )
 
         hero = self._card(page, fill="x")
         hero.columnconfigure(0, weight=1)
         hero.columnconfigure(1, weight=0)
-        ttk.Label(hero, text="SYSTEM READINESS", style="Muted.Surface.TLabel").grid(
+        ttk.Label(hero, text="SYSTEM STATUS", style="Muted.Surface.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
@@ -328,11 +400,19 @@ class SimControlsApp(tk.Tk):
         ).grid(row=1, column=0, sticky="w", pady=(7, 4))
         ttk.Label(
             hero,
-            text="Read-only scan • no files are changed",
+            textvariable=self.last_refreshed,
             style="Muted.Surface.TLabel",
         ).grid(row=2, column=0, sticky="w")
-        self.scan_button = self._button(hero, "Scan setup", self.scan_setup, primary=True)
-        self.scan_button.grid(row=0, column=1, rowspan=3, padx=(24, 0))
+        live_controls = ttk.Frame(hero, style="Surface.TFrame")
+        live_controls.grid(row=0, column=1, rowspan=3, padx=(24, 0), sticky="e")
+        ttk.Checkbutton(
+            live_controls,
+            text="Live sync",
+            variable=self.auto_refresh,
+            command=self._auto_refresh_changed,
+        ).pack(side="left", padx=(0, 12))
+        self.scan_button = self._button(hero, "Refresh now", self.scan_setup, primary=True)
+        self.scan_button.pack(side="left")
 
         status_grid = ttk.Frame(page)
         status_grid.pack(fill="x", pady=14)
@@ -399,8 +479,8 @@ class SimControlsApp(tk.Tk):
     def _build_bindings(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
-            "Preview bindings",
-            "Choose a profile and virtual device, then review the exact three-action change.",
+            "Live bindings",
+            "External changes appear here automatically. Nothing is written until you approve it.",
         )
 
         selectors = self._card(page, fill="x")
@@ -463,7 +543,7 @@ class SimControlsApp(tk.Tk):
         ).pack(side="left")
         self.apply_button = self._button(actions, "Apply safely", self.apply_plan, danger=True)
         self.apply_button.pack(side="right", padx=(10, 0))
-        self.preview_button = self._button(actions, "Create preview", self.preview_bindings, primary=True)
+        self.preview_button = self._button(actions, "Refresh preview", self.preview_bindings, primary=True)
         self.preview_button.pack(side="right")
         self.apply_button.configure(state="disabled")
 
@@ -581,9 +661,11 @@ class SimControlsApp(tk.Tk):
             try:
                 result = task()
             except Exception as error:  # UI boundary reports domain errors uniformly.
-                self.after(0, lambda: self._task_failed(error))
+                if not self._closing:
+                    self.after(0, lambda error=error: self._task_failed(error))
             else:
-                self.after(0, lambda: self._task_succeeded(result, success))
+                if not self._closing:
+                    self.after(0, lambda: self._task_succeeded(result, success))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -595,7 +677,68 @@ class SimControlsApp(tk.Tk):
         self._set_busy(False, "Ready")
         success(result)
 
-    def scan_setup(self) -> None:
+    def _schedule_watch(self) -> None:
+        if not self._closing and self._watch_after_id is None:
+            self._watch_after_id = self.after(AUTO_REFRESH_MS, self._poll_sources)
+
+    def _poll_sources(self) -> None:
+        self._watch_after_id = None
+        if (
+            self._closing
+            or not self.auto_refresh.get()
+            or self.busy
+            or self._watch_in_progress
+        ):
+            self._schedule_watch()
+            return
+
+        root_text = self.iracing_root.get().strip()
+        settings_text = self.simhub_settings.get().strip()
+        root = Path(root_text) if root_text else iracing.detect_iracing_directory()
+        settings = Path(settings_text) if settings_text else simhub.default_settings_path()
+        self._watch_in_progress = True
+
+        def worker() -> None:
+            devices, _error = iracing.enumerate_connected_devices()
+            state = _source_signature(root, settings, devices)
+            if not self._closing:
+                self.after(0, lambda: self._watch_complete(state))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _watch_complete(self, state: tuple) -> None:
+        self._watch_in_progress = False
+        if not self.auto_refresh.get():
+            self._source_state = state
+            self._schedule_watch()
+            return
+        if self._source_state is None:
+            self._source_state = state
+        elif state != self._source_state:
+            self._source_state = state
+            self.footer_status.set("Configuration change detected • refreshing…")
+            self.scan_setup(automatic=True)
+        self._schedule_watch()
+
+    def _auto_refresh_changed(self) -> None:
+        if self.auto_refresh.get():
+            self._source_state = None
+            self.last_refreshed.set("Live sync enabled • checking every few seconds")
+            if self._watch_after_id is None:
+                self.after(0, self._poll_sources)
+        else:
+            self.last_refreshed.set("Live sync paused • use Refresh now to update")
+
+    def _close(self) -> None:
+        self._closing = True
+        if self._watch_after_id is not None:
+            try:
+                self.after_cancel(self._watch_after_id)
+            except tk.TclError:
+                pass
+        self.destroy()
+
+    def scan_setup(self, automatic: bool = False) -> None:
         self._invalidate_preview()
         root_text = self.iracing_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
@@ -617,17 +760,26 @@ class SimControlsApp(tk.Tk):
             devices, device_error = iracing.enumerate_connected_devices()
             if device_error:
                 errors["device"] = device_error
-            return discovery, inspection, devices, errors
+            watched_root = discovery.iracing_directory if discovery else root
+            watched_settings = inspection.settings_path if inspection else settings
+            state = _source_signature(watched_root, watched_settings, devices)
+            return discovery, inspection, devices, errors, state
 
-        self._run_task("Scanning iRacing, SimHub, and connected controllers…", task, self._scan_complete)
+        message = "Syncing changed configuration…" if automatic else "Scanning iRacing, SimHub, and connected controllers…"
+        self._run_task(message, task, lambda result: self._scan_complete(result, automatic))
 
-    def _scan_complete(self, result) -> None:
-        self.discovery, self.simhub_inspection, self.devices, errors = result
+    def _scan_complete(self, result, automatic: bool = False) -> None:
+        previous_profile = self.profile_name.get()
+        previous_device = self.device_name.get()
+        self.discovery, self.simhub_inspection, self.devices, errors, self._source_state = result
         if self.discovery:
             self.iracing_root.set(str(self.discovery.iracing_directory))
             names = [profile.name for profile in self.discovery.profiles]
             self.profile_combo["values"] = names
-            selected = next((profile.name for profile in self.discovery.profiles if profile.active), names[0] if names else "")
+            selected = previous_profile if previous_profile in names else next(
+                (profile.name for profile in self.discovery.profiles if profile.active),
+                names[0] if names else "",
+            )
             self.profile_name.set(selected)
             active_text = f"{len(names)} profile{'s' if len(names) != 1 else ''}"
             self._set_status_card("iracing", "Connected", active_text, True)
@@ -639,14 +791,18 @@ class SimControlsApp(tk.Tk):
         if self.simhub_inspection:
             self.simhub_settings.set(str(self.simhub_inspection.settings_path))
             count = len(self.simhub_inspection.bindings)
-            self._set_status_card("simhub", "Connected", f"{count}/3 actions mapped", count > 0)
+            self._set_status_card(
+                "simhub",
+                "Connected",
+                f"{count}/{len(ACTIONS)} actions mapped",
+                count > 0,
+            )
         else:
             self._set_status_card("simhub", "Not found", errors.get("simhub", "Choose the settings file"), False)
 
         names = [device.name for device in self.devices]
         self.device_combo["values"] = names
-        previous = self.device_name.get()
-        self.device_name.set(previous if previous in names else (names[0] if names else ""))
+        self.device_name.set(previous_device if previous_device in names else (names[0] if names else ""))
         if names:
             self._set_status_card("device", "Connected", f"{len(names)} controller{'s' if len(names) != 1 else ''} found", True)
         else:
@@ -654,8 +810,13 @@ class SimControlsApp(tk.Tk):
 
         ready = bool(self.discovery and self.discovery.profiles and self.simhub_inspection and self.simhub_inspection.bindings and self.devices)
         self.preview_summary.set("Ready to preview safely" if ready else "Setup needs attention")
-        self.footer_status.set("Setup scan complete")
+        now = datetime.now().strftime("%I:%M:%S %p").lstrip("0")
+        live_text = "Live sync on" if self.auto_refresh.get() else "Live sync paused"
+        self.last_refreshed.set(f"Updated {now}  •  {live_text}  •  read-only monitoring")
+        self.footer_status.set("Configuration refreshed automatically" if automatic else "Setup scan complete")
         self._refresh_binding_rows()
+        if ready:
+            self.after(25, lambda: self.preview_bindings(quiet=True))
 
     def _set_status_card(self, key: str, value: str, detail: str, ready: bool) -> None:
         value_label, detail_label = self.status_cards[key]
@@ -709,20 +870,37 @@ class SimControlsApp(tk.Tk):
                 fg=COLORS["accent"] if button else COLORS["warning"],
             )
 
-    def preview_bindings(self) -> None:
+    def preview_bindings(self, quiet: bool = False) -> None:
         try:
             profile = self._selected_profile()
             catalog = self._catalog()
         except Exception as error:
-            messagebox.showerror("Cannot create preview", str(error), parent=self)
+            if quiet:
+                self.footer_status.set(f"Preview unavailable • {error}")
+            else:
+                messagebox.showerror("Cannot create preview", str(error), parent=self)
             return
 
         def task():
-            inspection = iracing.inspect_profile(profile)
-            plan = iracing.plan_bindings(profile, catalog)
-            return inspection, plan
+            try:
+                inspection = iracing.inspect_profile(profile)
+                plan = iracing.plan_bindings(profile, catalog)
+                return inspection, plan, None
+            except Exception as error:
+                return None, None, error
 
-        self._run_task("Building a byte-exact preview…", task, self._preview_complete)
+        message = "Refreshing binding preview…" if quiet else "Building a byte-exact preview…"
+        self._run_task(message, task, lambda result: self._preview_result(result, quiet))
+
+    def _preview_result(self, result, quiet: bool) -> None:
+        inspection, plan, error = result
+        if error is not None:
+            self._invalidate_preview()
+            self.footer_status.set(f"Preview needs attention • {error}")
+            if not quiet:
+                messagebox.showerror("Cannot create preview", str(error), parent=self)
+            return
+        self._preview_complete((inspection, plan))
 
     def _preview_complete(self, result) -> None:
         inspection, self.binding_plan = result
@@ -745,7 +923,9 @@ class SimControlsApp(tk.Tk):
 
     def _selection_changed(self, _event=None) -> None:
         self._invalidate_preview()
+        self.active_ack.set(False)
         self._refresh_binding_rows()
+        self.after(25, lambda: self.preview_bindings(quiet=True))
 
     def _invalidate_preview(self) -> None:
         self.binding_plan = None
