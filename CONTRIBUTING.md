@@ -4,7 +4,7 @@ The best early contributions are **reproducible game-created control samples** a
 
 ## Before opening a change
 
-1. Read [goals](docs/GOALS.md), [architecture](docs/ARCHITECTURE.md), and [research procedure](docs/RESEARCH.md).
+1. Read [goals](GOALS.md), [architecture](ARCHITECTURE.md), and [research procedure](RESEARCH.md).
 2. Record the game build, selected profile, device output (vJoy/Arduino/other), and exact in-game change.
 3. Keep raw personal configuration files private. Redact paths, account IDs, controller serials, GUIDs that identify your device, and unrelated settings before adding fixtures.
 4. State clearly whether the change was verified by parsing alone or also by reloading it in the game.

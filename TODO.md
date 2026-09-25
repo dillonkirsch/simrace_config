@@ -15,8 +15,8 @@ Status key: `[ ]` pending, `[x]` complete. Mark work done only after verificatio
 ## Milestone 1 — safe single-game proof of concept
 
 - [ ] Implement game/profile discovery and read-only binding inspection.
-- [ ] Model three actions: `pit_limiter`, `tc_increase`, `tc_decrease` (only where supported).
-- [ ] Accept a manually configured, stable SimHub virtual-button assignment.
+- [x] Model three actions: `pit_limiter`, `tc_increase`, `tc_decrease` (only where supported).
+- [x] Accept a manually configured, stable SimHub virtual-button assignment.
 - [ ] Preview an exact diff; reject ambiguous profiles, unknown formats, and duplicate assignments.
 - [ ] Implement backup, guarded write, post-write validation, and restore.
 - [ ] Prove that the game reads each changed binding and that a second apply makes no changes.

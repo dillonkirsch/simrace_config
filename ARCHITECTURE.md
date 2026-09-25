@@ -40,6 +40,12 @@ Illustrative only; actual schema will be versioned after the first fixtures:
 
 An adapter owns the mapping from `pit_limiter` to a **verified** native command. It also reports whether the command is a toggle, momentary action, or has a different meaning in that sim. Keep user-facing action IDs separate from guessed native names.
 
+In the app-owned catalog, `virtualButton` is the positive, one-based button
+number displayed by SimHub. This is only an internal/user-facing convention.
+Every adapter must explicitly convert it to the button indexing used by its
+tested game format; adapter code must never assume the native format has the
+same base.
+
 ## Adapter contract (conceptual)
 
 ```text

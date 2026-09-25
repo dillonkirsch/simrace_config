@@ -31,7 +31,7 @@ The manager initially **reads** the SimHub role-to-button assignment or accepts 
 | Assetto Corsa EVO | Settings moved to `Saved Games/ACE`; binding schema unverified | Discovery and backup only until proven writable |
 | Automobilista 2 | Controller settings `.sav` and in-game profiles | Discovery and backup only until proven writable |
 
-These are **targets, not promises of working adapters**. The earlier assumption that AMS2 only had a single profile is outdated: multiple in-game profiles were added. iRacing also introduced native control profiles in 2026. See [research notes](docs/RESEARCH.md).
+These are **targets, not promises of working adapters**. The earlier assumption that AMS2 only had a single profile is outdated: multiple in-game profiles were added. iRacing also introduced native control profiles in 2026. See [research notes](RESEARCH.md).
 
 ## Intended workflow
 
@@ -44,11 +44,41 @@ These are **targets, not promises of working adapters**. The earlier assumption 
 
 ## Project documents
 
-- [Goals and scope](docs/GOALS.md)
-- [Architecture and safety rules](docs/ARCHITECTURE.md)
+- [Goals and scope](GOALS.md)
+- [Architecture and safety rules](ARCHITECTURE.md)
 - [Prioritized to-do list](TODO.md)
-- [Research and evidence checklist](docs/RESEARCH.md)
+- [Research and evidence checklist](RESEARCH.md)
 - [Contribution guide](CONTRIBUTING.md)
+
+## Development
+
+The first code chunk is a dependency-free domain module for the versioned,
+manually configured action catalog. It defines the three proof-of-concept
+actions and rejects unknown schema versions, unsupported actions, duplicate
+actions, and duplicate virtual-button assignments.
+
+The safety module can also plan a byte-exact file replacement, detect changes
+since preview, create a hash-verified backup and receipt, roll back a failed
+post-write validation, preview a restore, and refuse to overwrite intervening
+changes. It is adapter-independent; no game writes are enabled until a tested
+adapter supplies native-format validation.
+
+Requirements: Node.js 22 or newer. Run the test suite with:
+
+```powershell
+node --test
+```
+
+See [`examples/catalog.example.json`](examples/catalog.example.json) for the
+current catalog shape. `virtualButton` is the positive, one-based number shown
+by SimHub; each game adapter is responsible for translating that number to the
+game's verified native convention.
+
+Validate a catalog without changing it or any game files:
+
+```powershell
+node src/cli.js catalog validate examples/catalog.example.json
+```
 
 ## First milestone
 
