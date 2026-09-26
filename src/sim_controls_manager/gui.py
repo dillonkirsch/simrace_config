@@ -8,10 +8,10 @@ import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, TypeVar
 
-from sim_controls_manager import simhub, updater
+from sim_controls_manager import deck_layout, simhub, updater
 from sim_controls_manager.adapters import (
     acc,
     assetto_corsa,
@@ -38,21 +38,24 @@ T = TypeVar("T")
 
 
 COLORS = {
-    "canvas": "#0A0F17",
-    "sidebar": "#070B11",
-    "surface": "#111A26",
-    "raised": "#192536",
-    "border": "#25344A",
-    "text": "#F6F8FC",
-    "muted": "#9AAAC0",
-    "subtle": "#66788F",
-    "accent": "#42D7B6",
-    "accent_soft": "#143A35",
-    "primary": "#4C84FF",
-    "primary_hover": "#6B9AFF",
-    "warning": "#F5B84B",
-    "danger": "#F06D76",
+    "canvas": "#070A10",
+    "sidebar": "#090D14",
+    "surface": "#0F151F",
+    "raised": "#171F2C",
+    "border": "#202A3A",
+    "text": "#F4F7FB",
+    "muted": "#97A4B8",
+    "subtle": "#5E6B7E",
+    "accent": "#4DE2C0",
+    "accent_soft": "#102B28",
+    "primary": "#6485FF",
+    "primary_hover": "#7A97FF",
+    "warning": "#FFBC5A",
+    "danger": "#FF6678",
 }
+
+FONT_TEXT = "Segoe UI Variable Text"
+FONT_DISPLAY = "Segoe UI Variable Display"
 
 AUTO_REFRESH_MS = 2500
 
@@ -293,8 +296,8 @@ class SimControlsApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Sim Controls Manager")
-        self.geometry("1220x790")
-        self.minsize(1060, 700)
+        self.geometry("1400x860")
+        self.minsize(1180, 740)
         self.configure(bg=COLORS["canvas"])
         self._set_icon()
 
@@ -343,6 +346,31 @@ class SimControlsApp(tk.Tk):
         self.control_search = tk.StringVar()
         self.control_result_summary = tk.StringVar()
         self.control_detail = tk.StringVar(value="Select a control to see mapping notes.")
+
+        self.tablet_layout_path = deck_layout.default_layout_path()
+        self.tablet_layout_warning = ""
+        try:
+            self.tablet_layout = deck_layout.load_layout(self.tablet_layout_path)
+        except ValueError as error:
+            self.tablet_layout = deck_layout.default_layout()
+            self.tablet_layout_warning = str(error)
+        self.deck_assigned_on_load = deck_layout.assign_missing_shortcuts(
+            self.tablet_layout
+        )
+        self.deck_selected_index = 0
+        self.deck_drag_index: int | None = None
+        self.deck_editing = True
+        self._deck_tile_bounds: dict[int, tuple[float, float, float, float]] = {}
+        self.deck_page_name = tk.StringVar()
+        self.deck_grid_size = tk.StringVar()
+        self.deck_tile_title = tk.StringVar(value="Tile 1")
+        self.deck_action = tk.StringVar()
+        self.deck_label = tk.StringVar()
+        self.deck_icon = tk.StringVar(value=deck_layout.ICON_NAMES[0])
+        self.deck_accent = tk.StringVar(value=deck_layout.ACCENT_NAMES[0])
+        self.deck_game = tk.StringVar(value=next(iter(GAMES.values())))
+        self.deck_shortcut = tk.StringVar()
+        self.deck_status = tk.StringVar(value="Drag a tile to arrange your deck.")
 
         self._configure_styles()
         self._build_shell()
@@ -491,6 +519,24 @@ class SimControlsApp(tk.Tk):
             background=[("active", COLORS["raised"])],
             foreground=[("active", COLORS["text"])],
         )
+        style.configure(
+            "Deck.TNotebook",
+            background=COLORS["surface"],
+            borderwidth=0,
+            tabmargins=(0, 10, 0, 0),
+        )
+        style.configure(
+            "Deck.TNotebook.Tab",
+            background=COLORS["raised"],
+            foreground=COLORS["muted"],
+            padding=(12, 7),
+            font=("Segoe UI Semibold", 8),
+        )
+        style.map(
+            "Deck.TNotebook.Tab",
+            background=[("selected", COLORS["primary"]), ("active", COLORS["border"])],
+            foreground=[("selected", COLORS["text"]), ("active", COLORS["text"])],
+        )
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)
@@ -525,7 +571,7 @@ class SimControlsApp(tk.Tk):
         for index, (page, label) in enumerate(
             (
                 ("dashboard", "  Overview"),
-                ("controls", "  Tablet shortcuts"),
+                ("controls", "  Tablet deck"),
                 ("bindings", "  Bindings"),
                 ("recovery", "  Recovery"),
             ),
@@ -863,58 +909,759 @@ class SimControlsApp(tk.Tk):
     def _build_control_names(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
-            "Tablet shortcuts",
-            "Button actions for a SimHub tablet or button deck—driving axes, pedals, and shifting are excluded.",
+            "Tablet deck",
+            "Arrange touch-friendly pages, change every square, and keep one shortcut plan across your sims.",
         )
 
-        search = self._card(page, fill="x")
-        search.columnconfigure(0, weight=1)
-        ttk.Label(search, text="Search shortcuts or native game names", style="Muted.Surface.TLabel").grid(
+        toolbar = self._card(page, fill="x")
+        toolbar.columnconfigure(5, weight=1)
+        ttk.Label(toolbar, text="PAGE", style="Muted.Surface.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(search, textvariable=self.control_result_summary, style="Muted.Surface.TLabel").grid(
-            row=0, column=1, sticky="e", padx=(18, 0)
+        self.deck_page_combo = ttk.Combobox(
+            toolbar,
+            textvariable=self.deck_page_name,
+            state="readonly",
+            width=18,
         )
-        search_entry = ttk.Entry(search, textvariable=self.control_search)
-        search_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(7, 0))
-        search_entry.bind("<KeyRelease>", self._filter_control_names)
+        self.deck_page_combo.grid(row=1, column=0, sticky="w", pady=(5, 0))
+        self.deck_page_combo.bind("<<ComboboxSelected>>", self._deck_page_changed)
 
-        table_card = self._card(page, fill="both", expand=True, pady=(14, 0))
-        table_card.columnconfigure(0, weight=1)
-        table_card.rowconfigure(0, weight=1)
-        columns = ("control", *GAMES)
-        self.control_tree = ttk.Treeview(
-            table_card,
-            columns=columns,
-            show="headings",
-            style="Control.Treeview",
-            selectmode="browse",
+        page_actions = ttk.Frame(toolbar, style="Surface.TFrame")
+        page_actions.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(5, 0))
+        self._button(page_actions, "+ Page", self._deck_add_page).pack(side="left")
+        self._button(page_actions, "Rename", self._deck_rename_page).pack(
+            side="left", padx=(6, 0)
         )
-        self.control_tree.heading("control", text="CONTROL")
-        self.control_tree.column("control", width=220, minwidth=180, stretch=False)
-        for game_id, game_name in GAMES.items():
-            self.control_tree.heading(game_id, text=game_name.upper())
-            self.control_tree.column(game_id, width=210, minwidth=140, stretch=False)
-        self.control_tree.grid(row=0, column=0, sticky="nsew")
-        self.control_tree.bind("<<TreeviewSelect>>", self._control_name_selected)
+        self._button(page_actions, "Delete", self._deck_delete_page).pack(
+            side="left", padx=(6, 0)
+        )
 
-        vertical = ttk.Scrollbar(table_card, orient="vertical", command=self.control_tree.yview)
-        vertical.grid(row=0, column=1, sticky="ns")
-        horizontal = ttk.Scrollbar(table_card, orient="horizontal", command=self.control_tree.xview)
-        horizontal.grid(row=1, column=0, sticky="ew")
-        self.control_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        ttk.Label(toolbar, text="GRID", style="Muted.Surface.TLabel").grid(
+            row=0, column=2, sticky="w", padx=(16, 0)
+        )
+        self.deck_grid_combo = ttk.Combobox(
+            toolbar,
+            textvariable=self.deck_grid_size,
+            values=tuple(f"{columns} × {rows}" for columns, rows in deck_layout.GRID_PRESETS),
+            state="readonly",
+            width=8,
+        )
+        self.deck_grid_combo.grid(row=1, column=2, padx=(16, 0), pady=(5, 0))
+        self.deck_grid_combo.bind("<<ComboboxSelected>>", self._deck_grid_changed)
+
+        self.deck_edit_button = self._button(
+            toolbar, "Editing on", self._toggle_deck_editing, primary=True
+        )
+        self.deck_edit_button.grid(row=1, column=3, padx=(10, 0), pady=(5, 0))
+
+        save_actions = ttk.Frame(toolbar, style="Surface.TFrame")
+        save_actions.grid(
+            row=2, column=0, columnspan=4, sticky="w", pady=(10, 0)
+        )
+        self._button(
+            save_actions,
+            "Edit selected square",
+            self._open_deck_editor,
+        ).pack(side="left")
+        self._button(
+            save_actions,
+            "Fill open keys",
+            self._assign_deck_shortcuts,
+        ).pack(side="left", padx=(8, 0))
+        self._button(
+            save_actions,
+            "Save layout",
+            self._save_deck_layout,
+            primary=True,
+        ).pack(side="left", padx=(8, 0))
+
+        workspace = ttk.Frame(page)
+        workspace.pack(fill="both", expand=True, pady=(14, 0))
+        workspace.columnconfigure(0, weight=1)
+        workspace.rowconfigure(0, weight=1)
+
+        deck_card = ttk.Frame(workspace, style="Surface.TFrame", padding=12)
+        deck_card.grid(row=0, column=0, sticky="nsew")
+        deck_card.columnconfigure(0, weight=1)
+        deck_card.rowconfigure(0, weight=1)
+        self.deck_canvas = tk.Canvas(
+            deck_card,
+            bg="#0B1017",
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        self.deck_canvas.grid(row=0, column=0, sticky="nsew")
+        self.deck_canvas.bind("<Configure>", self._draw_deck)
+        self.deck_canvas.bind("<ButtonPress-1>", self._deck_pointer_down)
+        self.deck_canvas.bind("<ButtonRelease-1>", self._deck_pointer_up)
+        self.deck_canvas.bind("<Double-Button-1>", self._open_deck_editor)
+
+        self.deck_editor = tk.Toplevel(self)
+        self.deck_editor.withdraw()
+        self.deck_editor.title("Edit tablet square")
+        self.deck_editor.geometry("480x560")
+        self.deck_editor.minsize(420, 500)
+        self.deck_editor.configure(bg=COLORS["canvas"])
+        self.deck_editor.transient(self)
+        self.deck_editor.protocol("WM_DELETE_WINDOW", self.deck_editor.withdraw)
+        self.deck_editor.columnconfigure(0, weight=1)
+        self.deck_editor.rowconfigure(0, weight=1)
+        inspector = ttk.Frame(
+            self.deck_editor,
+            style="Surface.TFrame",
+            padding=18,
+        )
+        inspector.grid(row=0, column=0, sticky="nsew")
+        inspector.columnconfigure(0, weight=1)
+        ttk.Label(
+            inspector,
+            textvariable=self.deck_tile_title,
+            style="CardTitle.Surface.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        tile_tabs = ttk.Notebook(inspector, style="Deck.TNotebook")
+        tile_tabs.grid(row=1, column=0, sticky="nsew")
+        appearance_tab = ttk.Frame(
+            tile_tabs, style="Surface.TFrame", padding=(2, 12, 2, 2)
+        )
+        shortcut_tab = ttk.Frame(
+            tile_tabs, style="Surface.TFrame", padding=(2, 12, 2, 2)
+        )
+        appearance_tab.columnconfigure(0, weight=1)
+        shortcut_tab.columnconfigure(0, weight=1)
+        tile_tabs.add(appearance_tab, text="SQUARE")
+        tile_tabs.add(shortcut_tab, text="SHORTCUT")
+
+        ttk.Label(
+            appearance_tab,
+            text="ACTION",
+            style="Muted.Surface.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        self._deck_action_labels = {
+            f"{CONTROLS[control_id].label}  ·  {control_id}": control_id
+            for control_id in _matching_tablet_shortcut_ids("")
+        }
+        self.deck_action_combo = ttk.Combobox(
+            appearance_tab,
+            textvariable=self.deck_action,
+            values=("— Empty square —", *sorted(self._deck_action_labels)),
+            state="readonly",
+            width=32,
+        )
+        self.deck_action_combo.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.deck_action_combo.bind("<<ComboboxSelected>>", self._deck_action_changed)
+
+        ttk.Label(appearance_tab, text="LABEL", style="Muted.Surface.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(10, 0)
+        )
+        ttk.Entry(appearance_tab, textvariable=self.deck_label).grid(
+            row=3, column=0, sticky="ew", pady=(5, 0)
+        )
+
+        appearance = ttk.Frame(appearance_tab, style="Surface.TFrame")
+        appearance.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        appearance.columnconfigure(0, weight=1)
+        appearance.columnconfigure(1, weight=1)
+        ttk.Label(appearance, text="ICON", style="Muted.Surface.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(appearance, text="COLOR", style="Muted.Surface.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Combobox(
+            appearance,
+            textvariable=self.deck_icon,
+            values=deck_layout.ICON_NAMES,
+            state="readonly",
+            width=11,
+        ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        ttk.Combobox(
+            appearance,
+            textvariable=self.deck_accent,
+            values=deck_layout.ACCENT_NAMES,
+            state="readonly",
+            width=11,
+        ).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(5, 0))
+        self._button(
+            appearance_tab,
+            "Apply square",
+            self._apply_deck_tile,
+            primary=True,
+        ).grid(row=5, column=0, sticky="ew", pady=(13, 0))
+        self._button(appearance_tab, "Clear square", self._clear_deck_tile).grid(
+            row=6, column=0, sticky="ew", pady=(7, 0)
+        )
+
+        ttk.Label(shortcut_tab, text="SIMULATOR", style="Muted.Surface.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.deck_game_combo = ttk.Combobox(
+            shortcut_tab,
+            textvariable=self.deck_game,
+            values=tuple(GAMES.values()),
+            state="readonly",
+            width=28,
+        )
+        self.deck_game_combo.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.deck_game_combo.bind("<<ComboboxSelected>>", self._deck_game_changed)
+        ttk.Label(
+            shortcut_tab,
+            text="SHORTCUT",
+            style="Muted.Surface.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(11, 0))
+        ttk.Entry(shortcut_tab, textvariable=self.deck_shortcut).grid(
+            row=3, column=0, sticky="ew", pady=(5, 0)
+        )
+        self._button(
+            shortcut_tab,
+            "Suggest open key",
+            self._suggest_selected_shortcut,
+        ).grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        ttk.Label(
+            shortcut_tab,
+            text=(
+                "Open-key suggestions use F13–F24 first, then modified variants. "
+                "Apply the square to keep a manual change."
+            ),
+            style="Muted.Surface.TLabel",
+            wraplength=205,
+            justify="left",
+        ).grid(row=5, column=0, sticky="w", pady=(12, 0))
 
         tk.Label(
-            table_card,
-            textvariable=self.control_detail,
+            inspector,
+            textvariable=self.deck_status,
             bg=COLORS["surface"],
             fg=COLORS["muted"],
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 8),
             justify="left",
-            anchor="w",
-            wraplength=850,
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        self._populate_control_names()
+            anchor="nw",
+            wraplength=210,
+        ).grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        inspector.rowconfigure(1, weight=1)
+
+        if self.tablet_layout_warning:
+            self.deck_status.set(
+                "The saved layout could not be loaded, so a fresh starter deck is shown. "
+                + self.tablet_layout_warning
+            )
+        elif self.deck_assigned_on_load:
+            self.deck_status.set(
+                f"Filled {self.deck_assigned_on_load} missing per-game shortcuts with open key suggestions."
+            )
+        self._refresh_deck_page_controls()
+        self._load_selected_deck_tile()
+
+    def _open_deck_editor(self, _event: tk.Event | None = None) -> None:
+        self._load_selected_deck_tile()
+        self.deck_editor.deiconify()
+        self.deck_editor.lift()
+        self.deck_editor.focus_force()
+
+    def _active_deck_page(self) -> deck_layout.DeckPage:
+        return self.tablet_layout.active_page()
+
+    def _refresh_deck_page_controls(self) -> None:
+        page = self._active_deck_page()
+        names = tuple(item.name for item in self.tablet_layout.pages)
+        self.deck_page_combo.configure(values=names)
+        self.deck_page_name.set(page.name)
+        self.deck_grid_size.set(f"{page.columns} × {page.rows}")
+
+    def _deck_page_changed(self, _event: tk.Event | None = None) -> None:
+        selected = self.deck_page_name.get()
+        for page in self.tablet_layout.pages:
+            if page.name == selected:
+                self.tablet_layout.active_page_id = page.page_id
+                break
+        self.deck_selected_index = 0
+        self._refresh_deck_page_controls()
+        self._load_selected_deck_tile()
+        self._draw_deck()
+
+    def _deck_add_page(self) -> None:
+        name = simpledialog.askstring(
+            "New tablet page",
+            "Page name",
+            parent=self,
+            initialvalue=f"Page {len(self.tablet_layout.pages) + 1}",
+        )
+        if name is None:
+            return
+        deck_layout.add_page(self.tablet_layout, name)
+        self.deck_selected_index = 0
+        self._refresh_deck_page_controls()
+        self._load_selected_deck_tile()
+        self._draw_deck()
+        self.deck_status.set("New page added. Save the layout when it is ready.")
+
+    def _deck_rename_page(self) -> None:
+        page = self._active_deck_page()
+        name = simpledialog.askstring(
+            "Rename tablet page",
+            "Page name",
+            parent=self,
+            initialvalue=page.name,
+        )
+        if name is None or not name.strip():
+            return
+        page.name = name.strip()
+        self._refresh_deck_page_controls()
+        self.deck_status.set("Page renamed. Save the layout to keep the change.")
+
+    def _deck_delete_page(self) -> None:
+        page = self._active_deck_page()
+        if len(self.tablet_layout.pages) == 1:
+            messagebox.showinfo("Tablet deck", "A deck must keep at least one page.")
+            return
+        if not messagebox.askyesno(
+            "Delete tablet page?",
+            f"Delete the {page.name!r} page and all of its squares?",
+            parent=self,
+        ):
+            return
+        deck_layout.delete_page(self.tablet_layout, page.page_id)
+        self.deck_selected_index = 0
+        self._refresh_deck_page_controls()
+        self._load_selected_deck_tile()
+        self._draw_deck()
+        self.deck_status.set("Page deleted. Save the layout to keep the change.")
+
+    def _deck_grid_changed(self, _event: tk.Event | None = None) -> None:
+        page = self._active_deck_page()
+        try:
+            columns_text, rows_text = self.deck_grid_size.get().split("×", 1)
+            columns, rows = int(columns_text.strip()), int(rows_text.strip())
+        except (ValueError, TypeError):
+            self.deck_grid_size.set(f"{page.columns} × {page.rows}")
+            return
+        capacity = columns * rows
+        overflow = [tile for tile in page.tiles[capacity:] if not tile.empty]
+        if overflow and not messagebox.askyesno(
+            "Resize tablet page?",
+            f"This smaller grid removes {len(overflow)} configured square(s). Continue?",
+            parent=self,
+        ):
+            self.deck_grid_size.set(f"{page.columns} × {page.rows}")
+            return
+        deck_layout.resize_page(page, columns, rows)
+        self.deck_selected_index = min(self.deck_selected_index, len(page.tiles) - 1)
+        self._load_selected_deck_tile()
+        self._draw_deck()
+        self.deck_status.set(f"Grid changed to {columns} × {rows}.")
+
+    def _toggle_deck_editing(self) -> None:
+        self.deck_editing = not self.deck_editing
+        self.deck_edit_button.configure(
+            text="Editing on" if self.deck_editing else "Preview mode",
+            bg=COLORS["primary"] if self.deck_editing else COLORS["raised"],
+        )
+        self.deck_status.set(
+            "Drag any square onto another to swap them."
+            if self.deck_editing
+            else "Preview mode is touch-safe; turn editing on to rearrange squares."
+        )
+
+    def _deck_index_at(self, x: float, y: float) -> int | None:
+        for index, (left, top, right, bottom) in self._deck_tile_bounds.items():
+            if left <= x <= right and top <= y <= bottom:
+                return index
+        return None
+
+    def _deck_pointer_down(self, event: tk.Event) -> None:
+        index = self._deck_index_at(event.x, event.y)
+        if index is None:
+            return
+        self.deck_selected_index = index
+        self.deck_drag_index = index
+        self._load_selected_deck_tile()
+        self._draw_deck()
+
+    def _deck_pointer_up(self, event: tk.Event) -> None:
+        target = self._deck_index_at(event.x, event.y)
+        source = self.deck_drag_index
+        self.deck_drag_index = None
+        if target is None or source is None:
+            return
+        if self.deck_editing and target != source:
+            deck_layout.swap_tiles(self._active_deck_page(), source, target)
+            self.deck_selected_index = target
+            self.deck_status.set(
+                f"Moved square {source + 1} to {target + 1}. Save when the layout is ready."
+            )
+        elif not self.deck_editing:
+            tile = self._active_deck_page().tiles[target]
+            if tile.action_id:
+                self.deck_status.set(
+                    f"Previewed {tile.label.replace(chr(10), ' ')}. Shortcut sending stays disabled while designing."
+                )
+        self._load_selected_deck_tile()
+        self._draw_deck()
+
+    def _selected_deck_tile(self) -> deck_layout.DeckTile:
+        page = self._active_deck_page()
+        self.deck_selected_index = min(self.deck_selected_index, len(page.tiles) - 1)
+        return page.tiles[self.deck_selected_index]
+
+    def _display_action(self, action_id: str | None) -> str:
+        if action_id is None:
+            return "— Empty square —"
+        for label, candidate in self._deck_action_labels.items():
+            if candidate == action_id:
+                return label
+        return "— Empty square —"
+
+    def _current_deck_game_id(self) -> str:
+        selected = self.deck_game.get()
+        return next(
+            (game_id for game_id, name in GAMES.items() if name == selected),
+            next(iter(GAMES)),
+        )
+
+    def _load_selected_deck_tile(self) -> None:
+        tile = self._selected_deck_tile()
+        self.deck_tile_title.set(f"Square {self.deck_selected_index + 1}")
+        self.deck_action.set(self._display_action(tile.action_id))
+        self.deck_label.set(tile.label.replace("\n", " / "))
+        self.deck_icon.set(tile.icon)
+        self.deck_accent.set(tile.accent)
+        game_id = self._current_deck_game_id()
+        self.deck_shortcut.set(tile.shortcuts.get(game_id, ""))
+        if tile.action_id and not deck_layout.control_is_available(game_id, tile.action_id):
+            self.deck_status.set(
+                f"{GAMES[game_id]} does not expose a verified native action for this square."
+            )
+
+    def _deck_game_changed(self, _event: tk.Event | None = None) -> None:
+        self._load_selected_deck_tile()
+        self._draw_deck()
+
+    @staticmethod
+    def _default_deck_label(action_id: str) -> str:
+        words = CONTROLS[action_id].label.upper().split()
+        if len(words) <= 2:
+            return " ".join(words)
+        midpoint = max(1, len(words) // 2)
+        return " ".join(words[:midpoint]) + "\n" + " ".join(words[midpoint:])
+
+    @staticmethod
+    def _default_deck_icon(action_id: str) -> str:
+        if "pit" in action_id:
+            return "tools"
+        if "fuel" in action_id:
+            return "fuel"
+        if "replay" in action_id:
+            return "replay"
+        if "camera" in action_id or "screenshot" in action_id:
+            return "camera"
+        if "chat" in action_id or "talk" in action_id:
+            return "chat"
+        if "wiper" in action_id or "visor" in action_id:
+            return "wiper"
+        if "light" in action_id:
+            return "headlight"
+        if "increase" in action_id or action_id.endswith("_up"):
+            return "plus"
+        if "decrease" in action_id or action_id.endswith("_down"):
+            return "minus"
+        if "previous" in action_id or "left" in action_id:
+            return "chevron-left"
+        if "next" in action_id or "right" in action_id:
+            return "chevron-right"
+        if "pause" in action_id or "stop" in action_id:
+            return "pause"
+        return "dashboard"
+
+    def _deck_action_changed(self, _event: tk.Event | None = None) -> None:
+        action_id = self._deck_action_labels.get(self.deck_action.get())
+        if action_id is None:
+            self.deck_label.set("")
+            return
+        self.deck_label.set(self._default_deck_label(action_id).replace("\n", " / "))
+        self.deck_icon.set(self._default_deck_icon(action_id))
+
+    def _apply_deck_tile(self) -> None:
+        tile = self._selected_deck_tile()
+        action_id = self._deck_action_labels.get(self.deck_action.get())
+        label = self.deck_label.get().strip().replace(" / ", "\n")
+        if action_id is None and not label:
+            self._active_deck_page().tiles[self.deck_selected_index] = deck_layout.DeckTile()
+            self._load_selected_deck_tile()
+            self._draw_deck()
+            return
+        tile.action_id = action_id
+        tile.label = label or (self._default_deck_label(action_id) if action_id else "CUSTOM")
+        tile.icon = self.deck_icon.get()
+        tile.accent = self.deck_accent.get()
+        game_id = self._current_deck_game_id()
+        shortcut = self.deck_shortcut.get().strip()
+        if shortcut:
+            tile.shortcuts[game_id] = shortcut
+        else:
+            tile.shortcuts.pop(game_id, None)
+        assigned = deck_layout.assign_missing_shortcuts(self.tablet_layout)
+        self.deck_shortcut.set(tile.shortcuts.get(game_id, ""))
+        self.deck_status.set(
+            f"Square updated. Filled {assigned} missing per-game shortcut(s)."
+            if assigned
+            else "Square updated. Existing shortcuts were preserved."
+        )
+        self._draw_deck()
+
+    def _clear_deck_tile(self) -> None:
+        self._active_deck_page().tiles[self.deck_selected_index] = deck_layout.DeckTile()
+        self._load_selected_deck_tile()
+        self._draw_deck()
+        self.deck_status.set("Square cleared. Save the layout to keep the change.")
+
+    def _suggest_selected_shortcut(self) -> None:
+        tile = self._selected_deck_tile()
+        action_id = self._deck_action_labels.get(self.deck_action.get()) or tile.action_id
+        game_id = self._current_deck_game_id()
+        if action_id is None:
+            self.deck_status.set("Choose an action before suggesting a shortcut.")
+            return
+        if not deck_layout.control_is_available(game_id, action_id):
+            self.deck_status.set(
+                f"{GAMES[game_id]} has no verified native action for {CONTROLS[action_id].label}."
+            )
+            return
+        used = {
+            candidate.shortcuts.get(game_id, "")
+            for page in self.tablet_layout.pages
+            for candidate in page.tiles
+        }
+        suggestion = deck_layout.suggest_shortcut(game_id, used)
+        if suggestion is None:
+            self.deck_status.set("No open key remains in the suggestion pool.")
+            return
+        self.deck_shortcut.set(suggestion)
+        self.deck_status.set(
+            f"Suggested {suggestion}; Apply square to keep it for {GAMES[game_id]}."
+        )
+
+    def _assign_deck_shortcuts(self) -> None:
+        assigned = deck_layout.assign_missing_shortcuts(self.tablet_layout)
+        self._load_selected_deck_tile()
+        self._draw_deck()
+        self.deck_status.set(
+            f"Filled {assigned} missing per-game shortcut(s). Existing choices were not changed."
+            if assigned
+            else "Every available action already has a shortcut; nothing changed."
+        )
+
+    def _save_deck_layout(self) -> None:
+        try:
+            path = deck_layout.save_layout(self.tablet_layout, self.tablet_layout_path)
+        except OSError as error:
+            messagebox.showerror("Could not save tablet layout", str(error), parent=self)
+            return
+        self.deck_status.set(f"Layout saved to {path}.")
+        self.footer_status.set("Tablet deck saved")
+
+    @staticmethod
+    def _rounded_points(
+        left: float, top: float, right: float, bottom: float, radius: float
+    ) -> tuple[float, ...]:
+        return (
+            left + radius,
+            top,
+            right - radius,
+            top,
+            right,
+            top,
+            right,
+            top + radius,
+            right,
+            bottom - radius,
+            right,
+            bottom,
+            right - radius,
+            bottom,
+            left + radius,
+            bottom,
+            left,
+            bottom,
+            left,
+            bottom - radius,
+            left,
+            top + radius,
+            left,
+            top,
+        )
+
+    def _draw_deck(self, _event: tk.Event | None = None) -> None:
+        if not hasattr(self, "deck_canvas"):
+            return
+        canvas = self.deck_canvas
+        canvas.delete("all")
+        page = self._active_deck_page()
+        width = max(canvas.winfo_width(), 560)
+        height = max(canvas.winfo_height(), 340)
+        padding = 14
+        gap = 9
+        size = min(
+            (width - padding * 2 - gap * (page.columns - 1)) / page.columns,
+            (height - padding * 2 - gap * (page.rows - 1)) / page.rows,
+        )
+        size = max(48, min(size, 80))
+        grid_width = page.columns * size + (page.columns - 1) * gap
+        grid_height = page.rows * size + (page.rows - 1) * gap
+        start_x = padding
+        start_y = padding
+        accents = {
+            "blue": ("#17283A", "#50A7FF"),
+            "teal": ("#153231", "#50D6C5"),
+            "green": ("#1C3324", "#69D98A"),
+            "amber": ("#382D17", "#FFBF47"),
+            "red": ("#3B2024", "#FF6B70"),
+            "purple": ("#32203B", "#C483FF"),
+            "slate": ("#202A37", "#AFC0D4"),
+        }
+        self._deck_tile_bounds = {}
+        game_id = self._current_deck_game_id()
+        for index, tile in enumerate(page.tiles):
+            row, column = divmod(index, page.columns)
+            left = start_x + column * (size + gap)
+            top = start_y + row * (size + gap)
+            right, bottom = left + size, top + size
+            self._deck_tile_bounds[index] = (left, top, right, bottom)
+            fill, accent = accents.get(tile.accent, accents["blue"])
+            if tile.empty:
+                fill, accent = "#0E141C", "#283444"
+            selected = index == self.deck_selected_index
+            outline = "#F6F8FC" if selected else "#425166"
+            canvas.create_polygon(
+                self._rounded_points(left, top, right, bottom, max(7, size * 0.12)),
+                smooth=True,
+                splinesteps=20,
+                fill=fill,
+                outline=outline,
+                width=3 if selected else 2,
+            )
+            if tile.empty:
+                if self.deck_editing:
+                    canvas.create_text(
+                        (left + right) / 2,
+                        (top + bottom) / 2,
+                        text="+",
+                        fill="#39485A",
+                        font=("Segoe UI Semibold", max(12, int(size * 0.22))),
+                    )
+                continue
+            icon_y = top + size * 0.36
+            self._draw_deck_icon(tile.icon, (left + right) / 2, icon_y, size * 0.23, accent)
+            canvas.create_text(
+                (left + right) / 2,
+                top + size * 0.73,
+                text=tile.label,
+                fill="#F7F9FC",
+                width=size * 0.88,
+                justify="center",
+                font=("Segoe UI Semibold", max(6, min(10, int(size * 0.1)))),
+            )
+            available = bool(
+                tile.action_id
+                and deck_layout.control_is_available(game_id, tile.action_id)
+            )
+            has_shortcut = bool(tile.shortcuts.get(game_id, "").strip())
+            dot = COLORS["accent"] if has_shortcut else (COLORS["warning"] if available else COLORS["subtle"])
+            canvas.create_oval(
+                right - max(9, size * 0.13),
+                top + max(5, size * 0.07),
+                right - max(5, size * 0.07),
+                top + max(9, size * 0.13),
+                fill=dot,
+                outline="",
+            )
+
+    def _draw_deck_icon(
+        self, icon: str, x: float, y: float, scale: float, color: str
+    ) -> None:
+        canvas = self.deck_canvas
+        width = max(2, int(scale / 9))
+        line = {"fill": color, "width": width, "capstyle": "round", "joinstyle": "round"}
+        if icon == "gauge":
+            canvas.create_arc(x - scale, y - scale * 0.7, x + scale, y + scale * 1.05, start=0, extent=180, style="arc", outline=color, width=width)
+            canvas.create_line(x, y + scale * 0.22, x + scale * 0.55, y - scale * 0.38, **line)
+        elif icon == "power":
+            canvas.create_arc(x - scale * 0.75, y - scale * 0.72, x + scale * 0.75, y + scale * 0.78, start=45, extent=270, style="arc", outline=color, width=width)
+            canvas.create_line(x, y - scale, x, y, **line)
+        elif icon == "starter":
+            canvas.create_oval(x - scale * 0.85, y - scale * 0.85, x + scale * 0.85, y + scale * 0.85, outline=color, width=width)
+            canvas.create_text(x, y, text="START", fill=color, font=("Segoe UI Semibold", max(5, int(scale * 0.32))))
+        elif icon in ("headlight", "flash"):
+            canvas.create_rectangle(x - scale * 0.9, y - scale * 0.62, x - scale * 0.2, y + scale * 0.62, outline=color, width=width)
+            for offset in (-0.45, 0, 0.45):
+                canvas.create_line(x, y + scale * offset, x + scale * 0.85, y + scale * (offset - 0.22), **line)
+        elif icon == "wiper":
+            canvas.create_arc(x - scale, y - scale * 0.7, x + scale, y + scale * 1.1, start=15, extent=150, style="arc", outline=color, width=width)
+            canvas.create_line(x - scale * 0.7, y + scale * 0.5, x + scale * 0.65, y - scale * 0.55, **line)
+        elif icon in ("eye-left", "eye-right"):
+            canvas.create_oval(x - scale, y - scale * 0.55, x + scale, y + scale * 0.55, outline=color, width=width)
+            pupil_x = x - scale * 0.25 if icon == "eye-left" else x + scale * 0.25
+            canvas.create_oval(pupil_x - scale * 0.2, y - scale * 0.2, pupil_x + scale * 0.2, y + scale * 0.2, fill=color, outline="")
+        elif icon == "pause":
+            canvas.create_rectangle(x - scale * 0.65, y - scale, x - scale * 0.18, y + scale, fill=color, outline="")
+            canvas.create_rectangle(x + scale * 0.18, y - scale, x + scale * 0.65, y + scale, fill=color, outline="")
+        elif icon == "reset":
+            canvas.create_arc(x - scale, y - scale, x + scale, y + scale, start=35, extent=285, style="arc", outline=color, width=width)
+            canvas.create_polygon(x - scale, y - scale * 0.4, x - scale * 0.95, y + scale * 0.15, x - scale * 0.45, y - scale * 0.05, fill=color, outline="")
+        elif icon == "mirror":
+            canvas.create_rectangle(x - scale, y - scale * 0.55, x + scale, y + scale * 0.55, outline=color, width=width)
+            canvas.create_line(x - scale * 0.7, y + scale * 0.35, x + scale * 0.6, y - scale * 0.35, **line)
+        elif icon == "road":
+            canvas.create_line(x - scale * 0.9, y + scale, x - scale * 0.35, y - scale, **line)
+            canvas.create_line(x + scale * 0.9, y + scale, x + scale * 0.35, y - scale, **line)
+            canvas.create_line(x, y + scale, x, y + scale * 0.45, **line)
+            canvas.create_line(x, y, x, y - scale * 0.45, **line)
+        elif icon in ("plus", "minus"):
+            canvas.create_line(x - scale, y, x + scale, y, **line)
+            if icon == "plus":
+                canvas.create_line(x, y - scale, x, y + scale, **line)
+        elif icon == "dashboard":
+            canvas.create_rectangle(x - scale, y - scale * 0.75, x + scale, y + scale * 0.75, outline=color, width=width)
+            for offset in (-0.4, 0, 0.4):
+                canvas.create_line(x - scale * 0.65, y + scale * offset, x + scale * 0.55, y + scale * offset, **line)
+        elif icon == "radio":
+            canvas.create_rectangle(x - scale * 0.5, y - scale * 0.8, x + scale * 0.5, y + scale * 0.8, outline=color, width=width)
+            canvas.create_line(x + scale * 0.7, y - scale * 0.55, x + scale, y - scale * 0.8, **line)
+            canvas.create_line(x + scale * 0.7, y, x + scale * 1.1, y, **line)
+            canvas.create_line(x + scale * 0.7, y + scale * 0.55, x + scale, y + scale * 0.8, **line)
+        elif icon == "weather":
+            canvas.create_oval(x - scale * 0.75, y - scale * 0.55, x + scale * 0.2, y + scale * 0.35, outline=color, width=width)
+            canvas.create_oval(x - scale * 0.1, y - scale * 0.35, x + scale * 0.8, y + scale * 0.4, outline=color, width=width)
+            for offset in (-0.45, 0, 0.45):
+                canvas.create_line(x + scale * offset, y + scale * 0.55, x + scale * (offset - 0.18), y + scale, **line)
+        elif icon == "tools":
+            canvas.create_line(x - scale * 0.75, y - scale * 0.75, x + scale * 0.75, y + scale * 0.75, **line)
+            canvas.create_line(x + scale * 0.75, y - scale * 0.75, x - scale * 0.75, y + scale * 0.75, **line)
+            canvas.create_oval(x - scale, y - scale, x - scale * 0.55, y - scale * 0.55, outline=color, width=width)
+        elif icon == "fuel":
+            canvas.create_rectangle(x - scale * 0.75, y - scale, x + scale * 0.25, y + scale, outline=color, width=width)
+            canvas.create_rectangle(x - scale * 0.5, y - scale * 0.7, x, y - scale * 0.15, outline=color, width=width)
+            canvas.create_line(x + scale * 0.25, y - scale * 0.6, x + scale * 0.75, y - scale * 0.25, x + scale * 0.75, y + scale * 0.55, **line)
+        elif icon == "tire":
+            canvas.create_oval(x - scale * 0.72, y - scale, x + scale * 0.72, y + scale, outline=color, width=width)
+            canvas.create_oval(x - scale * 0.35, y - scale * 0.62, x + scale * 0.35, y + scale * 0.62, outline=color, width=width)
+        elif icon == "chat":
+            canvas.create_rectangle(x - scale, y - scale * 0.75, x + scale, y + scale * 0.55, outline=color, width=width)
+            canvas.create_line(x - scale * 0.45, y + scale * 0.55, x - scale * 0.25, y + scale, x, y + scale * 0.55, **line)
+        elif icon == "replay":
+            canvas.create_oval(x - scale, y - scale, x + scale, y + scale, outline=color, width=width)
+            canvas.create_polygon(x - scale * 0.25, y - scale * 0.48, x - scale * 0.25, y + scale * 0.48, x + scale * 0.55, y, fill=color, outline="")
+        elif icon == "camera":
+            canvas.create_rectangle(x - scale, y - scale * 0.65, x + scale, y + scale * 0.75, outline=color, width=width)
+            canvas.create_oval(x - scale * 0.4, y - scale * 0.35, x + scale * 0.4, y + scale * 0.45, outline=color, width=width)
+            canvas.create_line(x - scale * 0.55, y - scale * 0.65, x - scale * 0.3, y - scale, x + scale * 0.25, y - scale, x + scale * 0.5, y - scale * 0.65, **line)
+        elif icon in ("chevron-left", "chevron-right"):
+            direction = -1 if icon == "chevron-left" else 1
+            canvas.create_line(x - direction * scale * 0.55, y - scale, x + direction * scale * 0.45, y, x - direction * scale * 0.55, y + scale, **line)
+        elif icon == "target":
+            canvas.create_oval(x - scale * 0.75, y - scale * 0.75, x + scale * 0.75, y + scale * 0.75, outline=color, width=width)
+            canvas.create_line(x - scale, y, x + scale, y, **line)
+            canvas.create_line(x, y - scale, x, y + scale, **line)
 
     def _filter_control_names(self, _event: tk.Event | None = None) -> None:
         self._populate_control_names()

@@ -40,9 +40,19 @@ identities every few seconds. Changes are rescanned and re-previewed
 automatically; they are never applied without explicit confirmation. The
 Recovery screen previews a receipt before restoring its backup.
 
-The **Tablet shortcuts** screen is intentionally limited to button actions for
-a SimHub tablet/button-deck workflow. Steering, throttle, brake, clutch,
-handbrake, paddle shifts, and direct gears are excluded from that browser.
+The **Tablet deck** screen is a touch-first, multi-page deck designer. It ships
+with editable Race, Pit, Replay, Camera, and Chat pages in an 8×4 layout. Tiles
+use high-contrast line icons, can be swapped by dragging, and expose editable
+labels, icons, colors, and per-simulator shortcuts. Pages can be added, renamed,
+deleted, or resized to 5×3, 6×4, 8×4, or 10×5.
+
+When an available action has no shortcut, the designer suggests a low-collision
+key beginning with F13–F24 and then modified variants. **Fill open keys** assigns
+missing suggestions across every inventoried simulator without overwriting a
+manual choice or inventing a shortcut for a game that has no verified native
+action. These values are the deck's saved shortcut plan; writing arbitrary
+keyboard bindings into native game files remains separate from the guarded,
+adapter-backed virtual-button workflow on the **Bindings** screen.
 
 ## The problem
 
