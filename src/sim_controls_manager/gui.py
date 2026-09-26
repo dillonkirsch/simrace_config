@@ -400,19 +400,26 @@ class SimControlsApp(tk.Tk):
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("TFrame", background=COLORS["canvas"])
-        style.configure("Surface.TFrame", background=COLORS["surface"])
+        style.configure(
+            "Surface.TFrame",
+            background=COLORS["surface"],
+            bordercolor=COLORS["border"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border"],
+        )
+        style.configure("Raised.TFrame", background=COLORS["raised"])
         style.configure("Sidebar.TFrame", background=COLORS["sidebar"])
         style.configure(
             "TLabel",
             background=COLORS["canvas"],
             foreground=COLORS["text"],
-            font=("Segoe UI", 10),
+            font=(FONT_TEXT, 10),
         )
         style.configure(
             "Surface.TLabel",
             background=COLORS["surface"],
             foreground=COLORS["text"],
-            font=("Segoe UI", 10),
+            font=(FONT_TEXT, 10),
         )
         style.configure(
             "Muted.Surface.TLabel",
@@ -424,19 +431,19 @@ class SimControlsApp(tk.Tk):
             "Title.TLabel",
             background=COLORS["canvas"],
             foreground=COLORS["text"],
-            font=("Segoe UI Semibold", 24),
+            font=(FONT_DISPLAY, 28, "bold"),
         )
         style.configure(
             "CardTitle.Surface.TLabel",
             background=COLORS["surface"],
             foreground=COLORS["text"],
-            font=("Segoe UI Semibold", 12),
+            font=(FONT_DISPLAY, 12, "bold"),
         )
         style.configure(
             "Metric.Surface.TLabel",
             background=COLORS["surface"],
             foreground=COLORS["text"],
-            font=("Segoe UI Semibold", 16),
+            font=(FONT_DISPLAY, 17, "bold"),
         )
         style.configure(
             "TEntry",
@@ -446,7 +453,7 @@ class SimControlsApp(tk.Tk):
             bordercolor=COLORS["border"],
             lightcolor=COLORS["border"],
             darkcolor=COLORS["border"],
-            padding=8,
+            padding=(11, 9),
         )
         style.configure(
             "TCombobox",
@@ -457,7 +464,7 @@ class SimControlsApp(tk.Tk):
             bordercolor=COLORS["border"],
             lightcolor=COLORS["border"],
             darkcolor=COLORS["border"],
-            padding=7,
+            padding=(11, 9),
         )
         style.map(
             "TCombobox",
@@ -470,7 +477,7 @@ class SimControlsApp(tk.Tk):
             "TCheckbutton",
             background=COLORS["surface"],
             foreground=COLORS["muted"],
-            font=("Segoe UI", 9),
+            font=(FONT_TEXT, 9),
         )
         style.map(
             "TCheckbutton",
@@ -497,7 +504,7 @@ class SimControlsApp(tk.Tk):
             lightcolor=COLORS["border"],
             darkcolor=COLORS["border"],
             rowheight=34,
-            font=("Segoe UI", 9),
+            font=(FONT_TEXT, 9),
         )
         style.configure(
             "Control.Treeview.Heading",
@@ -506,7 +513,7 @@ class SimControlsApp(tk.Tk):
             bordercolor=COLORS["border"],
             lightcolor=COLORS["border"],
             darkcolor=COLORS["border"],
-            font=("Segoe UI Semibold", 9),
+            font=(FONT_TEXT, 9, "bold"),
             padding=(8, 9),
         )
         style.map(
@@ -542,38 +549,60 @@ class SimControlsApp(tk.Tk):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=238)
+        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=214)
         sidebar.grid(row=0, column=0, sticky="nsw")
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
 
         brand = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(28, 38))
-        tk.Label(
+        brand.grid(row=0, column=0, sticky="ew", padx=20, pady=(26, 42))
+        logo = tk.Canvas(
             brand,
-            text="S",
-            bg=COLORS["primary"],
-            fg=COLORS["text"],
-            font=("Segoe UI Semibold", 12),
-            width=3,
-            height=2,
-        ).pack(side="left", padx=(0, 12))
+            width=42,
+            height=42,
+            bg=COLORS["sidebar"],
+            highlightthickness=0,
+            bd=0,
+        )
+        logo.pack(side="left", padx=(0, 12))
+        logo.create_polygon(
+            self._rounded_points(1, 1, 41, 41, 11),
+            smooth=True,
+            splinesteps=20,
+            fill=COLORS["primary"],
+            outline="#839CFF",
+        )
+        logo.create_text(
+            21,
+            21,
+            text="SC",
+            fill=COLORS["text"],
+            font=(FONT_DISPLAY, 9, "bold"),
+        )
+        brand_text = tk.Frame(brand, bg=COLORS["sidebar"])
+        brand_text.pack(side="left")
         tk.Label(
-            brand,
-            text="SIM CONTROLS\nMANAGER",
+            brand_text,
+            text="SIM CONTROL",
             bg=COLORS["sidebar"],
             fg=COLORS["text"],
-            font=("Segoe UI Semibold", 9),
-            justify="left",
-        ).pack(side="left")
+            font=(FONT_DISPLAY, 10, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text,
+            text="RACE SYSTEMS",
+            bg=COLORS["sidebar"],
+            fg=COLORS["subtle"],
+            font=(FONT_TEXT, 7, "bold"),
+        ).pack(anchor="w", pady=(2, 0))
 
         self.nav_buttons: dict[str, tk.Button] = {}
         for index, (page, label) in enumerate(
             (
-                ("dashboard", "  Overview"),
-                ("controls", "  Tablet deck"),
-                ("bindings", "  Bindings"),
-                ("recovery", "  Recovery"),
+                ("dashboard", "⌂   Overview"),
+                ("controls", "▦   Deck Studio"),
+                ("bindings", "⇄   Bindings"),
+                ("recovery", "↺   Recovery"),
             ),
             start=1,
         ):
@@ -588,9 +617,9 @@ class SimControlsApp(tk.Tk):
                 activeforeground=COLORS["text"],
                 relief="flat",
                 bd=0,
-                padx=18,
-                pady=14,
-                font=("Segoe UI Semibold", 10),
+                padx=16,
+                pady=13,
+                font=(FONT_TEXT, 10, "bold"),
                 cursor="hand2",
             )
             button.grid(row=index, column=0, sticky="ew", padx=10, pady=2)
@@ -598,17 +627,17 @@ class SimControlsApp(tk.Tk):
 
         version = updater.current_version()
         sidebar_footer = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        sidebar_footer.grid(row=6, column=0, sticky="sew", padx=22, pady=22)
+        sidebar_footer.grid(row=6, column=0, sticky="sew", padx=20, pady=20)
         tk.Label(
             sidebar_footer,
-            text="●  LIVE CONFIG SYNC",
+            text="●  SYSTEM ONLINE",
             bg=COLORS["sidebar"],
             fg=COLORS["accent"],
-            font=("Segoe UI Semibold", 8),
+            font=(FONT_TEXT, 8, "bold"),
         ).pack(anchor="w")
         tk.Label(
             sidebar_footer,
-            text=f"Safe preview workflow  •  {version}",
+            text=f"Protected writes  ·  {version}",
             bg=COLORS["sidebar"],
             fg=COLORS["subtle"],
             font=("Segoe UI", 8),
@@ -623,7 +652,7 @@ class SimControlsApp(tk.Tk):
 
         self.pages = {}
         for name in ("dashboard", "controls", "bindings", "recovery"):
-            page = ttk.Frame(content, padding=(34, 28, 34, 14))
+            page = ttk.Frame(content, padding=(36, 28, 36, 14))
             page.grid(row=0, column=0, sticky="nsew")
             self.pages[name] = page
 
@@ -636,7 +665,7 @@ class SimControlsApp(tk.Tk):
         footer.grid(row=1, column=0, sticky="ew")
         footer.grid_propagate(False)
         self.footer_dot = tk.Label(
-            footer, text="●", bg=COLORS["sidebar"], fg=COLORS["accent"], font=("Segoe UI", 8)
+            footer, text="●", bg=COLORS["sidebar"], fg=COLORS["accent"], font=(FONT_TEXT, 8)
         )
         self.footer_dot.pack(side="left", padx=(24, 8))
         tk.Label(
@@ -644,22 +673,34 @@ class SimControlsApp(tk.Tk):
             textvariable=self.footer_status,
             bg=COLORS["sidebar"],
             fg=COLORS["muted"],
-            font=("Segoe UI", 9),
+            font=(FONT_TEXT, 9),
         ).pack(side="left")
 
         self.show_page("dashboard")
 
     def _page_heading(self, parent: ttk.Frame, title: str, description: str) -> None:
+        ttk.Label(
+            parent,
+            text=f"WORKSPACE  /  {title.upper()}",
+            foreground=COLORS["primary_hover"],
+            font=(FONT_TEXT, 8, "bold"),
+        ).pack(anchor="w", pady=(0, 7))
         ttk.Label(parent, text=title, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             parent,
             text=description,
             foreground=COLORS["muted"],
-            font=("Segoe UI", 10),
-        ).pack(anchor="w", pady=(5, 22))
+            font=(FONT_TEXT, 10),
+        ).pack(anchor="w", pady=(6, 20))
 
     def _card(self, parent: tk.Misc, **pack_options) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Surface.TFrame", padding=20)
+        card = ttk.Frame(
+            parent,
+            style="Surface.TFrame",
+            padding=18,
+            borderwidth=1,
+            relief="solid",
+        )
         card.pack(**pack_options)
         return card
 
@@ -909,13 +950,13 @@ class SimControlsApp(tk.Tk):
     def _build_control_names(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
-            "Tablet deck",
-            "Arrange touch-friendly pages, change every square, and keep one shortcut plan across your sims.",
+            "Deck Studio",
+            "Build a touch-first race console with reusable pages and per-simulator shortcuts.",
         )
 
         toolbar = self._card(page, fill="x")
         toolbar.columnconfigure(5, weight=1)
-        ttk.Label(toolbar, text="PAGE", style="Muted.Surface.TLabel").grid(
+        ttk.Label(toolbar, text="ACTIVE PAGE", style="Muted.Surface.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         self.deck_page_combo = ttk.Combobox(
@@ -929,7 +970,7 @@ class SimControlsApp(tk.Tk):
 
         page_actions = ttk.Frame(toolbar, style="Surface.TFrame")
         page_actions.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(5, 0))
-        self._button(page_actions, "+ Page", self._deck_add_page).pack(side="left")
+        self._button(page_actions, "+  New", self._deck_add_page).pack(side="left")
         self._button(page_actions, "Rename", self._deck_rename_page).pack(
             side="left", padx=(6, 0)
         )
@@ -937,7 +978,7 @@ class SimControlsApp(tk.Tk):
             side="left", padx=(6, 0)
         )
 
-        ttk.Label(toolbar, text="GRID", style="Muted.Surface.TLabel").grid(
+        ttk.Label(toolbar, text="CANVAS", style="Muted.Surface.TLabel").grid(
             row=0, column=2, sticky="w", padx=(16, 0)
         )
         self.deck_grid_combo = ttk.Combobox(
@@ -951,7 +992,7 @@ class SimControlsApp(tk.Tk):
         self.deck_grid_combo.bind("<<ComboboxSelected>>", self._deck_grid_changed)
 
         self.deck_edit_button = self._button(
-            toolbar, "Editing on", self._toggle_deck_editing, primary=True
+            toolbar, "●  Edit mode", self._toggle_deck_editing, primary=True
         )
         self.deck_edit_button.grid(row=1, column=3, padx=(10, 0), pady=(5, 0))
 
@@ -961,17 +1002,17 @@ class SimControlsApp(tk.Tk):
         )
         self._button(
             save_actions,
-            "Edit selected square",
+            "✦  Customize tile",
             self._open_deck_editor,
         ).pack(side="left")
         self._button(
             save_actions,
-            "Fill open keys",
+            "⌘  Auto-map keys",
             self._assign_deck_shortcuts,
         ).pack(side="left", padx=(8, 0))
         self._button(
             save_actions,
-            "Save layout",
+            "Save changes",
             self._save_deck_layout,
             primary=True,
         ).pack(side="left", padx=(8, 0))
@@ -981,13 +1022,19 @@ class SimControlsApp(tk.Tk):
         workspace.columnconfigure(0, weight=1)
         workspace.rowconfigure(0, weight=1)
 
-        deck_card = ttk.Frame(workspace, style="Surface.TFrame", padding=12)
+        deck_card = ttk.Frame(
+            workspace,
+            style="Surface.TFrame",
+            padding=12,
+            borderwidth=1,
+            relief="solid",
+        )
         deck_card.grid(row=0, column=0, sticky="nsew")
         deck_card.columnconfigure(0, weight=1)
         deck_card.rowconfigure(0, weight=1)
         self.deck_canvas = tk.Canvas(
             deck_card,
-            bg="#0B1017",
+            bg="#090D14",
             highlightthickness=0,
             bd=0,
             cursor="hand2",
@@ -1134,7 +1181,7 @@ class SimControlsApp(tk.Tk):
             textvariable=self.deck_status,
             bg=COLORS["surface"],
             fg=COLORS["muted"],
-            font=("Segoe UI", 8),
+            font=(FONT_TEXT, 8),
             justify="left",
             anchor="nw",
             wraplength=210,
@@ -1254,7 +1301,7 @@ class SimControlsApp(tk.Tk):
     def _toggle_deck_editing(self) -> None:
         self.deck_editing = not self.deck_editing
         self.deck_edit_button.configure(
-            text="Editing on" if self.deck_editing else "Preview mode",
+            text="●  Edit mode" if self.deck_editing else "○  Preview",
             bg=COLORS["primary"] if self.deck_editing else COLORS["raised"],
         )
         self.deck_status.set(
@@ -1499,28 +1546,77 @@ class SimControlsApp(tk.Tk):
         page = self._active_deck_page()
         width = max(canvas.winfo_width(), 560)
         height = max(canvas.winfo_height(), 340)
-        padding = 14
-        gap = 9
+        padding = 18
+        chrome_height = 48
+        gap = 10
         size = min(
             (width - padding * 2 - gap * (page.columns - 1)) / page.columns,
-            (height - padding * 2 - gap * (page.rows - 1)) / page.rows,
+            (
+                height
+                - padding * 2
+                - chrome_height
+                - gap * (page.rows - 1)
+            )
+            / page.rows,
         )
-        size = max(48, min(size, 80))
+        size = max(44, min(size, 64))
         grid_width = page.columns * size + (page.columns - 1) * gap
-        grid_height = page.rows * size + (page.rows - 1) * gap
         start_x = padding
-        start_y = padding
+        start_y = padding + chrome_height
+        game_id = self._current_deck_game_id()
+        mapped = sum(
+            1 for tile in page.tiles if tile.shortcuts.get(game_id, "").strip()
+        )
+        canvas.create_text(
+            start_x,
+            padding + 4,
+            text=page.name.upper(),
+            fill=COLORS["text"],
+            anchor="nw",
+            font=(FONT_DISPLAY, 11, "bold"),
+        )
+        canvas.create_text(
+            start_x,
+            padding + 25,
+            text=f"{page.columns} × {page.rows} GRID   ·   DRAG TO REORDER",
+            fill=COLORS["subtle"],
+            anchor="nw",
+            font=(FONT_TEXT, 7, "bold"),
+        )
+        canvas.create_oval(
+            start_x + 250,
+            padding + 7,
+            start_x + 257,
+            padding + 14,
+            fill=COLORS["accent"],
+            outline="",
+        )
+        canvas.create_text(
+            start_x + 266,
+            padding + 4,
+            text=f"{GAMES[game_id]}  ·  {mapped} mapped",
+            fill=COLORS["muted"],
+            anchor="nw",
+            font=(FONT_TEXT, 8, "bold"),
+        )
+        canvas.create_line(
+            start_x,
+            start_y - 11,
+            start_x + grid_width,
+            start_y - 11,
+            fill="#182130",
+            width=1,
+        )
         accents = {
-            "blue": ("#17283A", "#50A7FF"),
-            "teal": ("#153231", "#50D6C5"),
-            "green": ("#1C3324", "#69D98A"),
-            "amber": ("#382D17", "#FFBF47"),
-            "red": ("#3B2024", "#FF6B70"),
-            "purple": ("#32203B", "#C483FF"),
-            "slate": ("#202A37", "#AFC0D4"),
+            "blue": ("#111B29", "#52A7FF"),
+            "teal": ("#102320", "#4DE2C0"),
+            "green": ("#14251B", "#63DF91"),
+            "amber": ("#291F11", "#FFBD52"),
+            "red": ("#29171B", "#FF6B7A"),
+            "purple": ("#221729", "#C78BFF"),
+            "slate": ("#151D29", "#B1C0D3"),
         }
         self._deck_tile_bounds = {}
-        game_id = self._current_deck_game_id()
         for index, tile in enumerate(page.tiles):
             row, column = divmod(index, page.columns)
             left = start_x + column * (size + gap)
@@ -1529,37 +1625,80 @@ class SimControlsApp(tk.Tk):
             self._deck_tile_bounds[index] = (left, top, right, bottom)
             fill, accent = accents.get(tile.accent, accents["blue"])
             if tile.empty:
-                fill, accent = "#0E141C", "#283444"
+                fill, accent = "#0B1119", "#273246"
             selected = index == self.deck_selected_index
-            outline = "#F6F8FC" if selected else "#425166"
+            radius = max(8, size * 0.13)
             canvas.create_polygon(
-                self._rounded_points(left, top, right, bottom, max(7, size * 0.12)),
+                self._rounded_points(
+                    left + 2,
+                    top + 4,
+                    right + 2,
+                    bottom + 4,
+                    radius,
+                ),
+                smooth=True,
+                splinesteps=20,
+                fill="#05070B",
+                outline="",
+            )
+            if selected:
+                canvas.create_polygon(
+                    self._rounded_points(
+                        left - 3,
+                        top - 3,
+                        right + 3,
+                        bottom + 3,
+                        radius + 2,
+                    ),
+                    smooth=True,
+                    splinesteps=20,
+                    fill="",
+                    outline="#3A4D8E",
+                    width=2,
+                )
+            outline = COLORS["primary_hover"] if selected else "#29364A"
+            canvas.create_polygon(
+                self._rounded_points(left, top, right, bottom, radius),
                 smooth=True,
                 splinesteps=20,
                 fill=fill,
                 outline=outline,
-                width=3 if selected else 2,
+                width=2 if selected else 1,
             )
+            if not tile.empty:
+                canvas.create_line(
+                    left + size * 0.18,
+                    top + 2,
+                    right - size * 0.18,
+                    top + 2,
+                    fill=accent,
+                    width=2,
+                    capstyle="round",
+                )
             if tile.empty:
                 if self.deck_editing:
                     canvas.create_text(
                         (left + right) / 2,
                         (top + bottom) / 2,
                         text="+",
-                        fill="#39485A",
-                        font=("Segoe UI Semibold", max(12, int(size * 0.22))),
+                        fill="#354258",
+                        font=(FONT_TEXT, max(12, int(size * 0.22)), "bold"),
                     )
                 continue
-            icon_y = top + size * 0.36
+            icon_y = top + size * 0.35
             self._draw_deck_icon(tile.icon, (left + right) / 2, icon_y, size * 0.23, accent)
             canvas.create_text(
                 (left + right) / 2,
-                top + size * 0.73,
+                top + size * 0.75,
                 text=tile.label,
-                fill="#F7F9FC",
-                width=size * 0.88,
+                fill=COLORS["text"],
+                width=size * 0.86,
                 justify="center",
-                font=("Segoe UI Semibold", max(6, min(10, int(size * 0.1)))),
+                font=(
+                    FONT_TEXT,
+                    max(6, min(9, int(size * 0.095))),
+                    "bold",
+                ),
             )
             available = bool(
                 tile.action_id
@@ -1567,13 +1706,15 @@ class SimControlsApp(tk.Tk):
             )
             has_shortcut = bool(tile.shortcuts.get(game_id, "").strip())
             dot = COLORS["accent"] if has_shortcut else (COLORS["warning"] if available else COLORS["subtle"])
+            badge_size = max(5, size * 0.075)
             canvas.create_oval(
-                right - max(9, size * 0.13),
-                top + max(5, size * 0.07),
-                right - max(5, size * 0.07),
-                top + max(9, size * 0.13),
+                right - size * 0.14,
+                top + size * 0.08,
+                right - size * 0.14 + badge_size,
+                top + size * 0.08 + badge_size,
                 fill=dot,
-                outline="",
+                outline=fill,
+                width=1,
             )
 
     def _draw_deck_icon(
@@ -1754,14 +1895,14 @@ class SimControlsApp(tk.Tk):
     ) -> tk.Button:
         background = COLORS["raised"]
         foreground = COLORS["text"]
-        active = "#243247"
+        active = "#222C3D"
         if primary:
             background = COLORS["primary"]
             active = COLORS["primary_hover"]
         elif danger:
-            background = "#3A2428"
-            foreground = "#FFB2B2"
-            active = "#503036"
+            background = "#2D1A22"
+            foreground = "#FF9EAA"
+            active = "#3B222C"
         return tk.Button(
             parent,
             text=text,
@@ -1773,9 +1914,10 @@ class SimControlsApp(tk.Tk):
             disabledforeground=COLORS["subtle"],
             relief="flat",
             bd=0,
-            padx=17,
-            pady=9,
-            font=("Segoe UI Semibold", 9),
+            highlightthickness=0,
+            padx=16,
+            pady=10,
+            font=(FONT_TEXT, 9, "bold"),
             cursor="hand2",
         )
 
@@ -1784,8 +1926,9 @@ class SimControlsApp(tk.Tk):
         for page, button in self.nav_buttons.items():
             selected = page == name
             button.configure(
-                bg=COLORS["raised"] if selected else COLORS["sidebar"],
+                bg="#131B28" if selected else COLORS["sidebar"],
                 fg=COLORS["text"] if selected else COLORS["muted"],
+                activebackground="#182232" if selected else COLORS["raised"],
             )
 
     def _set_busy(self, busy: bool, message: str) -> None:

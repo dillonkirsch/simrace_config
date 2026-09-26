@@ -46,6 +46,10 @@ use high-contrast line icons, can be swapped by dragging, and expose editable
 labels, icons, colors, and per-simulator shortcuts. Pages can be added, renamed,
 deleted, or resized to 5×3, 6×4, 8×4, or 10×5.
 
+The desktop UI uses the **Precision Night** visual system: a compact navigation
+rail, variable-display typography, low-contrast cockpit surfaces, purpose-led
+status colors, and a dedicated Deck Studio canvas sized for touch interaction.
+
 When an available action has no shortcut, the designer suggests a low-collision
 key beginning with F13–F24 and then modified variants. **Fill open keys** assigns
 missing suggestions across every inventoried simulator without overwriting a
