@@ -16,9 +16,11 @@ positional/extended batch is in
 replay batch is in [MEDIA_CONTROL_MAP.md](MEDIA_CONTROL_MAP.md). The full
 structured vocabulary is available from `sim_controls_manager.control_names`.
 
-**Status:** Windows GUI proof of concept with five provisional, write-capable
-adapters: iRacing, Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa
-EVO, and Le Mans Ultimate. Each adapter
+**Status:** Windows GUI proof of concept with adapters for all six inventoried
+simulators. Five are provisional and write-capable: iRacing, Assetto Corsa,
+Assetto Corsa Competizione, Assetto Corsa EVO, and Le Mans Ultimate. The
+Automobilista 2 adapter is intentionally discovery-only because its controller
+save remains Twofish-encrypted. Each write-capable adapter
 uses preview, conflict checks, process guards, verified backup, guarded apply,
 and receipt-based restore. Real SimHub virtual-device and in-game validation
 remain before any adapter is considered production-complete.
@@ -31,7 +33,7 @@ Launch the modern desktop interface with no arguments:
 python -m sim_controls_manager
 ```
 
-The app discovers iRacing, Assetto Corsa, ACC, AC EVO, and Le Mans Ultimate control profiles, reads the
+The app discovers iRacing, Assetto Corsa, ACC, AC EVO, Automobilista 2, and Le Mans Ultimate control profiles, reads the
 three supported SimHub Control Mapper roles, lists connected DirectInput
 controllers, previews exact binding changes, and applies them through the same
 verified backup and rollback path as the CLI. Live sync watches the simulator
@@ -89,7 +91,7 @@ not the same thing as a working adapter. The current implementation status is:
 | Assetto Corsa | **Built — provisional** | Discovers live controls and saved INI presets; previews, applies, and restores `[TCUP]` and `[TCDN]`; pit limiter is correctly reported as not exposed | Verify the virtual-controller `JOY` index and both shortcuts in game |
 | Assetto Corsa Competizione | **Built — provisional** | Discovers and validates live JSON; previews, applies, and restores `PitLimiter`, `IncreaseTC`, and `DecreaseTC` on a selected non-pedal device | Register the SimHub virtual controller in ACC and verify all three shortcuts in game |
 | Assetto Corsa EVO | **Built — experimental** | Decodes the installed protobuf descriptor and live device mapping; previews, applies, and restores `InputAction_Car_Pit_Limiter_Toggle` plus payloads 1/2 of `InputAction_Car_TractionControl_Cycle_X_2` | Register the SimHub DirectInput device in game, then verify button indexing and TC payload direction in AC EVO before treating writes as validated |
-| Automobilista 2 | **Needs adapter** | Installed control labels are inventoried for the crosswalk only | Decode the protected/binary `.sav` controller format and its multi-profile behavior before enabling writes |
+| Automobilista 2 | **Built — discovery-only** | Discovers every account's controller-settings save, validates the Twofish container, and reports the three requested native actions as format-locked | Recover the payload key and checksum algorithm, identify the active in-game slot, then verify device/button encoding before enabling writes |
 | Le Mans Ultimate | **Built — provisional** | Discovers JSON controller presets; previews, applies, and restores `Speed Limiter`, `Traction Control Up`, and `Traction Control Down` on the selected non-pedal SimHub device | Create a user preset containing the SimHub controller and verify device identity, the `32 + button - 1` DirectInput ID translation, and all three shortcuts in game |
 
 “Built — provisional” means the adapter code, tests, GUI/CLI workflow, backup,
@@ -297,6 +299,30 @@ SimControlsManagerCLI.exe assetto-corsa-evo restore <receipt-path>
 This adapter remains **experimental** until the payload direction and resulting
 bindings are checked in AC EVO's controls screen and on track. Preview, backup,
 validation, process guard, rollback, and restore are implemented.
+
+### Automobilista 2 adapter
+
+The AMS2 adapter discovers controller saves below
+`Documents\Automobilista 2\savegame\<account>\automobilista 2\profiles` and
+validates the observable container structure: an 8-byte header containing an
+unknown 32-bit word and declared length, followed by a 16-byte-block Twofish
+payload. The cipher identification comes from the installed game binary's own
+save-module version message. The adapter also keeps account/profile names distinct when more than one save
+directory exists.
+
+The adapter is deliberately read-only. Inspection reports `pit_limiter`,
+`tc_increase`, and `tc_decrease` as format-locked; there is no `plan`, `apply`,
+or `restore` command that could accidentally alter an encrypted save:
+
+```powershell
+SimControlsManagerCLI.exe ams2 discover
+SimControlsManagerCLI.exe ams2 inspect
+SimControlsManagerCLI.exe ams2 inspect --profile "<account>/default"
+```
+
+Writes require controlled game-created before/after samples, a verified
+decrypt/encrypt round trip, the checksum algorithm, active-slot selection, and
+confirmed device/button encoding.
 
 ### Le Mans Ultimate adapter
 

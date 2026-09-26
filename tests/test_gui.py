@@ -169,6 +169,29 @@ class GuiFormattingTests(unittest.TestCase):
             )
             self.assertNotEqual(with_lmu, with_evo)
 
+            ams2_root = root / "Automobilista 2"
+            ams2_controls = (
+                ams2_root
+                / "savegame"
+                / "123456"
+                / "automobilista 2"
+                / "profiles"
+                / "default.controllersettings.v1.03.sav"
+            )
+            ams2_controls.parent.mkdir(parents=True)
+            ams2_controls.write_bytes(b"encrypted")
+            with_ams2 = _source_signature(
+                root,
+                settings,
+                (DeviceInfo("instance", "product", "SimHub vJoy"),),
+                ac_root,
+                acc_root,
+                lmu_root,
+                evo_root,
+                ams2_root,
+            )
+            self.assertNotEqual(with_evo, with_ams2)
+
     def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
         with mock.patch.object(gui, "SimControlsApp") as app_type:
             app = app_type.return_value

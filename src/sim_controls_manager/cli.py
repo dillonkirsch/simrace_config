@@ -13,6 +13,7 @@ from sim_controls_manager.adapters import (
     acc,
     assetto_corsa,
     assetto_corsa_evo,
+    automobilista_2,
     iracing,
     le_mans_ultimate,
 )
@@ -218,6 +219,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Overwrite a target changed since apply after reviewing it",
     )
 
+    ams2_parser = commands.add_parser(
+        "ams2",
+        help="Discover and validate Twofish-encrypted Automobilista 2 controller saves",
+    )
+    ams2_commands = ams2_parser.add_subparsers(dest="ams2_command")
+    ams2_discover = ams2_commands.add_parser(
+        "discover", help="List AMS2 controller saves without changing them"
+    )
+    ams2_discover.add_argument(
+        "--root", type=Path, help="Exact Documents\\Automobilista 2 path"
+    )
+    ams2_inspect = ams2_commands.add_parser(
+        "inspect", help="Validate a Twofish-encrypted AMS2 controller-save container"
+    )
+    ams2_inspect.add_argument(
+        "--root", type=Path, help="Exact Documents\\Automobilista 2 path"
+    )
+    ams2_inspect.add_argument(
+        "--profile", help="Account/profile name; required when multiple saves exist"
+    )
+
     evo_parser = commands.add_parser(
         "assetto-corsa-evo",
         help="Discover, inspect, preview, and safely update AC EVO shortcuts",
@@ -324,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
         return _apply_lmu(args.root, args.profile, args.catalog, args.yes)
     if args.command == "lmu" and args.lmu_command == "restore":
         return _restore_lmu(args.receipt, args.force)
+    if args.command == "ams2" and args.ams2_command == "discover":
+        return _discover_automobilista_2(args.root)
+    if args.command == "ams2" and args.ams2_command == "inspect":
+        return _inspect_automobilista_2(args.root, args.profile)
     if (
         args.command == "assetto-corsa-evo"
         and args.assetto_corsa_evo_command == "discover"
@@ -1150,6 +1176,84 @@ def _lmu_backup_directory(profile_name: str) -> Path:
         for character in profile_name
     )
     return base / "sim-controls-manager" / "backups" / "lmu" / safe_profile
+
+
+def _discover_automobilista_2(root: Path | None) -> int:
+    try:
+        result = automobilista_2.discover(root)
+    except OSError as error:
+        print(f"Automobilista 2 discovery failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Automobilista 2 directory: {result.automobilista_2_directory}")
+    if result.profiles:
+        print("Controller saves:")
+        for profile in result.profiles:
+            print(
+                f"- {profile.name} (container v{profile.format_version}, read-only): "
+                f"{profile.controls_path}"
+            )
+    else:
+        print("Controller saves: none")
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+    print("Read-only discovery complete; no files were changed.")
+    return 0
+
+
+def _select_automobilista_2_profile(
+    discovery: automobilista_2.DiscoveryResult,
+    requested_profile: str | None,
+) -> automobilista_2.ProfileCandidate:
+    if requested_profile:
+        matches = tuple(
+            profile
+            for profile in discovery.profiles
+            if profile.name.casefold() == requested_profile.casefold()
+        )
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(f"AMS2 controller save {requested_profile!r} was not found")
+    if len(discovery.profiles) == 1:
+        return discovery.profiles[0]
+    if not discovery.profiles:
+        raise ValueError("no AMS2 controller saves were found")
+    raise ValueError("multiple AMS2 controller saves exist; pass --profile")
+
+
+def _inspect_automobilista_2(
+    root: Path | None, requested_profile: str | None
+) -> int:
+    try:
+        discovery = automobilista_2.discover(root)
+        profile = _select_automobilista_2_profile(discovery, requested_profile)
+        inspection = automobilista_2.inspect_profile(profile)
+    except (OSError, ValueError) as error:
+        print(f"Automobilista 2 inspection failed: {error}", file=sys.stderr)
+        return 1
+    container = inspection.container
+    print(f"Profile: {profile.name} (read-only)")
+    print(f"File: {profile.controls_path}")
+    print(
+        f"Format: Twofish-encrypted SAV container v{profile.format_version}; "
+        f"declared {container.declared_length} bytes; "
+        f"encrypted {container.encrypted_length} bytes in "
+        f"{container.encrypted_blocks} blocks"
+    )
+    print(
+        f"Unknown header word: 0x{container.header_word:08X}; "
+        f"encrypted padding: {container.padding_length} bytes; "
+        f"repeated blocks: {container.repeated_blocks}"
+    )
+    for action in inspection.actions:
+        print(
+            f"- {action.action_id} -> {action.native_action}: "
+            "format locked (binding cannot be inspected safely)"
+        )
+    print(
+        "Read-only inspection complete; writes stay disabled until the payload, "
+        "checksum, button encoding, and active slot are verified."
+    )
+    return 0
 
 
 def _discover_assetto_corsa_evo(root: Path | None) -> int:

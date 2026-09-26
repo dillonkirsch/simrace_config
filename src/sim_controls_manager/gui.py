@@ -16,6 +16,7 @@ from sim_controls_manager.adapters import (
     acc,
     assetto_corsa,
     assetto_corsa_evo,
+    automobilista_2,
     iracing,
     le_mans_ultimate,
 )
@@ -228,6 +229,7 @@ def _source_signature(
     acc_root: Path | None = None,
     lmu_root: Path | None = None,
     assetto_corsa_evo_root: Path | None = None,
+    automobilista_2_root: Path | None = None,
 ) -> tuple:
     """Fingerprint every external input shown by the GUI without reading its contents."""
 
@@ -284,6 +286,22 @@ def _source_signature(
                 assetto_corsa_evo_root / assetto_corsa_evo.CONTROLS_FILE,
             )
         )
+    if automobilista_2_root is not None:
+        savegame_root = automobilista_2_root / automobilista_2.SAVEGAME_DIRECTORY
+        paths.extend((automobilista_2_root, savegame_root))
+        if savegame_root.is_dir():
+            try:
+                paths.extend(
+                    sorted(
+                        savegame_root.glob(
+                            f"*/{automobilista_2.GAME_DIRECTORY}/"
+                            f"{automobilista_2.PROFILES_DIRECTORY}/"
+                            f"{automobilista_2.CONTROLLER_FILE_PATTERN}"
+                        )
+                    )
+                )
+            except OSError:
+                pass
     device_signature = tuple(
         sorted((device.instance_guid, device.product_guid, device.name) for device in devices)
     )
@@ -308,6 +326,9 @@ class SimControlsApp(tk.Tk):
         self.assetto_corsa_evo_discovery: (
             assetto_corsa_evo.DiscoveryResult | None
         ) = None
+        self.automobilista_2_discovery: (
+            automobilista_2.DiscoveryResult | None
+        ) = None
         self.simhub_inspection: simhub.SimHubInspection | None = None
         self.devices: tuple[iracing.DeviceInfo, ...] = ()
         self.binding_plan: (
@@ -331,6 +352,7 @@ class SimControlsApp(tk.Tk):
         self.acc_root = tk.StringVar()
         self.lmu_root = tk.StringVar()
         self.assetto_corsa_evo_root = tk.StringVar()
+        self.automobilista_2_root = tk.StringVar()
         self.simhub_settings = tk.StringVar()
         self.game_name = tk.StringVar(value="iRacing")
         self.profile_name = tk.StringVar()
@@ -754,6 +776,7 @@ class SimControlsApp(tk.Tk):
                 ("assetto_corsa", "ASSETTO CORSA"),
                 ("acc", "ACC"),
                 ("assetto_corsa_evo", "ASSETTO CORSA EVO"),
+                ("automobilista_2", "AUTOMOBILISTA 2"),
                 ("lmu", "LE MANS ULTIMATE"),
                 ("simhub", "SIMHUB"),
                 ("device", "VIRTUAL DEVICE"),
@@ -826,11 +849,18 @@ class SimControlsApp(tk.Tk):
         self._path_row(
             paths,
             5,
+            "Automobilista 2 folder",
+            self.automobilista_2_root,
+            self._browse_automobilista_2,
+        )
+        self._path_row(
+            paths,
+            6,
             "Le Mans Ultimate folder",
             self.lmu_root,
             self._browse_lmu,
         )
-        self._path_row(paths, 6, "SimHub settings", self.simhub_settings, self._browse_simhub)
+        self._path_row(paths, 7, "SimHub settings", self.simhub_settings, self._browse_simhub)
 
     def _path_row(
         self,
@@ -1991,6 +2021,7 @@ class SimControlsApp(tk.Tk):
         acc_root_text = self.acc_root.get().strip()
         lmu_root_text = self.lmu_root.get().strip()
         evo_root_text = self.assetto_corsa_evo_root.get().strip()
+        ams2_root_text = self.automobilista_2_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
         root = Path(root_text) if root_text else iracing.detect_iracing_directory()
         ac_root = (
@@ -2009,13 +2040,25 @@ class SimControlsApp(tk.Tk):
             if evo_root_text
             else assetto_corsa_evo.detect_assetto_corsa_evo_directory()
         )
+        ams2_root = (
+            Path(ams2_root_text)
+            if ams2_root_text
+            else automobilista_2.detect_automobilista_2_directory()
+        )
         settings = Path(settings_text) if settings_text else simhub.default_settings_path()
         self._watch_in_progress = True
 
         def worker() -> None:
             devices, _error = iracing.enumerate_connected_devices()
             state = _source_signature(
-                root, settings, devices, ac_root, acc_root, lmu_root, evo_root
+                root,
+                settings,
+                devices,
+                ac_root,
+                acc_root,
+                lmu_root,
+                evo_root,
+                ams2_root,
             )
             if not self._closing:
                 self.after(0, lambda: self._watch_complete(state))
@@ -2061,6 +2104,7 @@ class SimControlsApp(tk.Tk):
         acc_root_text = self.acc_root.get().strip()
         lmu_root_text = self.lmu_root.get().strip()
         evo_root_text = self.assetto_corsa_evo_root.get().strip()
+        ams2_root_text = self.automobilista_2_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
 
         def task():
@@ -2069,6 +2113,7 @@ class SimControlsApp(tk.Tk):
             acc_root = Path(acc_root_text) if acc_root_text else None
             lmu_root = Path(lmu_root_text) if lmu_root_text else None
             evo_root = Path(evo_root_text) if evo_root_text else None
+            ams2_root = Path(ams2_root_text) if ams2_root_text else None
             settings = Path(settings_text) if settings_text else None
             errors = {}
             try:
@@ -2097,6 +2142,11 @@ class SimControlsApp(tk.Tk):
                 evo_discovery = None
                 errors["assetto_corsa_evo"] = str(error)
             try:
+                ams2_discovery = automobilista_2.discover(ams2_root)
+            except Exception as error:
+                ams2_discovery = None
+                errors["automobilista_2"] = str(error)
+            try:
                 inspection = simhub.inspect_control_mapper(settings)
             except Exception as error:
                 inspection = None
@@ -2115,6 +2165,11 @@ class SimControlsApp(tk.Tk):
                 if evo_discovery
                 else evo_root
             )
+            watched_ams2_root = (
+                ams2_discovery.automobilista_2_directory
+                if ams2_discovery
+                else ams2_root
+            )
             watched_settings = inspection.settings_path if inspection else settings
             state = _source_signature(
                 watched_root,
@@ -2124,6 +2179,7 @@ class SimControlsApp(tk.Tk):
                 watched_acc_root,
                 watched_lmu_root,
                 watched_evo_root,
+                watched_ams2_root,
             )
             return (
                 discovery,
@@ -2131,6 +2187,7 @@ class SimControlsApp(tk.Tk):
                 acc_discovery,
                 lmu_discovery,
                 evo_discovery,
+                ams2_discovery,
                 inspection,
                 devices,
                 errors,
@@ -2153,6 +2210,7 @@ class SimControlsApp(tk.Tk):
             self.acc_discovery,
             self.lmu_discovery,
             self.assetto_corsa_evo_discovery,
+            self.automobilista_2_discovery,
             self.simhub_inspection,
             self.devices,
             errors,
@@ -2223,6 +2281,26 @@ class SimControlsApp(tk.Tk):
                 "assetto_corsa_evo",
                 "Not found",
                 errors.get("assetto_corsa_evo", "Choose the Saved Games\\ACE folder"),
+                False,
+            )
+
+        if self.automobilista_2_discovery:
+            self.automobilista_2_root.set(
+                str(self.automobilista_2_discovery.automobilista_2_directory)
+            )
+            ams2_count = len(self.automobilista_2_discovery.profiles)
+            detail = (
+                f"{ams2_count} Twofish controller save"
+                f"{'s' if ams2_count != 1 else ''} • read-only"
+            )
+            self._set_status_card("automobilista_2", "Detected", detail, False)
+        else:
+            self._set_status_card(
+                "automobilista_2",
+                "Not found",
+                errors.get(
+                    "automobilista_2", "Choose the Automobilista 2 folder"
+                ),
                 False,
             )
 
@@ -2629,6 +2707,14 @@ class SimControlsApp(tk.Tk):
         )
         if path:
             self.lmu_root.set(path)
+            self.scan_setup()
+
+    def _browse_automobilista_2(self) -> None:
+        path = filedialog.askdirectory(
+            title="Choose your Automobilista 2 folder", parent=self
+        )
+        if path:
+            self.automobilista_2_root.set(path)
             self.scan_setup()
 
     def _browse_assetto_corsa_evo(self) -> None:

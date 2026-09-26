@@ -1,6 +1,6 @@
 # Format research and evidence log
 
-**Reviewed:** 2026-09-25. This file separates published evidence from hypotheses. Paths and schemas should be rechecked against the installed game version before any adapter writes.
+**Reviewed:** 2026-09-26. This file separates published evidence from hypotheses. Paths and schemas should be rechecked against the installed game version before any adapter writes.
 
 | Game | Evidence available | What still needs proof | Current write gate |
 | --- | --- | --- | --- |
@@ -9,7 +9,7 @@
 | Assetto Corsa Competizione | Control JSON files have been observed, but no official schema is established in this research. | Path and profile selection, action IDs, device metadata, unknown field preservation, in-game effect. | Closed |
 | Assetto Corsa EVO | The installed executable embeds the protobuf schema for `input_devices.inputdeviceconfiguration`; the adapter now losslessly preserves unknown fields and uses action 138 plus action 140 payloads 1/2. | Register a SimHub DirectInput device, preview a real mapping, then verify zero-based buttons, TC payload direction, reload, and on-track effect. | Experimental writes enabled behind preview and active-profile confirmation |
 | Le Mans Ultimate | Studio 397 documents `current controls.json` and a shift toward GameInput with DirectInput fallback. | Action entries, input mode and device identifiers, files actually updated by the game. | Closed |
-| Automobilista 2 | Reiza community identifies `.sav` controller settings and notes six built-in profiles since v1.2.2.0. | Current profile filenames, binary structure, safe per-binding edits, in-game effect. | Closed |
+| Automobilista 2 | A local install contains `default.controllersettings.v1.03.sav` under the documented account/profile hierarchy. Its 8-byte header contains an unknown word plus a declared length of 171,828 bytes and is followed by 171,840 bytes of 16-byte-block ciphertext. The installed executable identifies the save implementation as Twofish; repeated blocks and a common encrypted tail across neighboring `.sav` files confirm that the payload is not safe to patch as plaintext. The discovery-only adapter validates these structural invariants. | Key derivation, plaintext schema, first-header-word/checksum semantics, six-slot selection, device/button encoding, lossless round trip, and in-game effect. | Locked in code; no plan/apply/restore commands |
 
 "Closed" means no file writes enabled yet; it does not mean the project is blocked. Discovery and backups can precede full adapters.
 
