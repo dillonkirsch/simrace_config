@@ -25,7 +25,7 @@ Status key: `[ ]` pending, `[x]` complete. Mark work done only after verificatio
 
 - [ ] Add a second adapter with its own fixtures and in-game verification.
 - [ ] Investigate iRacing profile variants, Assetto Corsa saved presets, ACC custom presets, and LMU's GameInput/DirectInput paths.
-- [ ] Keep AC EVO and AMS2 read-only until format/version/device evidence supports writes.
+- [ ] Keep AMS2 read-only until format/version/device evidence supports writes; keep AC EVO experimental until its generated bindings are verified in game.
 - [ ] Verify real device names and button index conventions (0-based versus 1-based) for each game.
 
 ## Milestone 3 — usable Windows app

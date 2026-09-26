@@ -12,7 +12,13 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable, TypeVar
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import acc, assetto_corsa, iracing, le_mans_ultimate
+from sim_controls_manager.adapters import (
+    acc,
+    assetto_corsa,
+    assetto_corsa_evo,
+    iracing,
+    le_mans_ultimate,
+)
 from sim_controls_manager.catalog import ACTIONS, Catalog, validate_catalog
 from sim_controls_manager.control_names import (
     CONTROLS,
@@ -144,6 +150,16 @@ def _lmu_binding_text(binding: le_mans_ultimate.NativeBinding | None) -> str:
     return binding.binding_type.replace("_", " ").title()
 
 
+def _assetto_corsa_evo_binding_text(
+    binding: assetto_corsa_evo.NativeBinding | None,
+) -> str:
+    if binding is None:
+        return "Unavailable"
+    if binding.binding_type == "button" and binding.native_button_index is not None:
+        return f"Button {binding.native_button_index + 1} • {binding.product_name or 'Device'}"
+    return binding.binding_type.replace("_", " ").title()
+
+
 def _backup_directory(profile_name: str) -> Path:
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     safe_profile = "".join(
@@ -182,6 +198,11 @@ def _lmu_backup_directory(profile_name: str) -> Path:
     return base / "sim-controls-manager" / "backups" / "lmu" / safe_profile
 
 
+def _assetto_corsa_evo_backup_directory() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "sim-controls-manager" / "backups" / "assetto-corsa-evo" / "Live"
+
+
 def _validate_iracing_bytes(data: bytes) -> bool:
     return iracing.build_gfcc(iracing.parse_gfcc(data)) == data
 
@@ -203,6 +224,7 @@ def _source_signature(
     assetto_corsa_root: Path | None = None,
     acc_root: Path | None = None,
     lmu_root: Path | None = None,
+    assetto_corsa_evo_root: Path | None = None,
 ) -> tuple:
     """Fingerprint every external input shown by the GUI without reading its contents."""
 
@@ -252,6 +274,13 @@ def _source_signature(
                 )
             except OSError:
                 pass
+    if assetto_corsa_evo_root is not None:
+        paths.extend(
+            (
+                assetto_corsa_evo_root,
+                assetto_corsa_evo_root / assetto_corsa_evo.CONTROLS_FILE,
+            )
+        )
     device_signature = tuple(
         sorted((device.instance_guid, device.product_guid, device.name) for device in devices)
     )
@@ -273,6 +302,9 @@ class SimControlsApp(tk.Tk):
         self.assetto_corsa_discovery: assetto_corsa.DiscoveryResult | None = None
         self.acc_discovery: acc.DiscoveryResult | None = None
         self.lmu_discovery: le_mans_ultimate.DiscoveryResult | None = None
+        self.assetto_corsa_evo_discovery: (
+            assetto_corsa_evo.DiscoveryResult | None
+        ) = None
         self.simhub_inspection: simhub.SimHubInspection | None = None
         self.devices: tuple[iracing.DeviceInfo, ...] = ()
         self.binding_plan: (
@@ -280,6 +312,7 @@ class SimControlsApp(tk.Tk):
             | assetto_corsa.BindingPlan
             | acc.BindingPlan
             | le_mans_ultimate.BindingPlan
+            | assetto_corsa_evo.BindingPlan
             | None
         ) = None
         self.binding_plan_game: str | None = None
@@ -294,6 +327,7 @@ class SimControlsApp(tk.Tk):
         self.assetto_corsa_root = tk.StringVar()
         self.acc_root = tk.StringVar()
         self.lmu_root = tk.StringVar()
+        self.assetto_corsa_evo_root = tk.StringVar()
         self.simhub_settings = tk.StringVar()
         self.game_name = tk.StringVar(value="iRacing")
         self.profile_name = tk.StringVar()
@@ -624,7 +658,7 @@ class SimControlsApp(tk.Tk):
 
         status_grid = ttk.Frame(page)
         status_grid.pack(fill="x", pady=14)
-        for column in range(3):
+        for column in range(4):
             status_grid.columnconfigure(column, weight=1, uniform="status")
         self.status_cards: dict[str, tuple[tk.Label, tk.Label]] = {}
         for column, (key, title) in enumerate(
@@ -632,6 +666,7 @@ class SimControlsApp(tk.Tk):
                 ("iracing", "iRACING"),
                 ("assetto_corsa", "ASSETTO CORSA"),
                 ("acc", "ACC"),
+                ("assetto_corsa_evo", "ASSETTO CORSA EVO"),
                 ("lmu", "LE MANS ULTIMATE"),
                 ("simhub", "SIMHUB"),
                 ("device", "VIRTUAL DEVICE"),
@@ -639,11 +674,11 @@ class SimControlsApp(tk.Tk):
         ):
             outer = ttk.Frame(status_grid, style="Surface.TFrame", padding=18)
             outer.grid(
-                row=column // 3,
-                column=column % 3,
+                row=column // 4,
+                column=column % 4,
                 sticky="nsew",
-                padx=(0 if column % 3 == 0 else 5, 0 if column % 3 == 2 else 5),
-                pady=(0 if column < 3 else 10, 0),
+                padx=(0 if column % 4 == 0 else 5, 0 if column % 4 == 3 else 5),
+                pady=(0 if column < 4 else 10, 0),
             )
             tk.Label(
                 outer,
@@ -658,7 +693,7 @@ class SimControlsApp(tk.Tk):
                 bg=COLORS["surface"],
                 fg=COLORS["text"],
                 font=("Segoe UI Semibold", 12),
-                wraplength=220,
+                wraplength=180,
                 justify="left",
             )
             value.pack(anchor="w", pady=(9, 4))
@@ -668,7 +703,7 @@ class SimControlsApp(tk.Tk):
                 bg=COLORS["surface"],
                 fg=COLORS["subtle"],
                 font=("Segoe UI", 8),
-                wraplength=220,
+                wraplength=180,
                 justify="left",
             )
             detail.pack(anchor="w")
@@ -697,11 +732,18 @@ class SimControlsApp(tk.Tk):
         self._path_row(
             paths,
             4,
+            "Assetto Corsa EVO folder",
+            self.assetto_corsa_evo_root,
+            self._browse_assetto_corsa_evo,
+        )
+        self._path_row(
+            paths,
+            5,
             "Le Mans Ultimate folder",
             self.lmu_root,
             self._browse_lmu,
         )
-        self._path_row(paths, 5, "SimHub settings", self.simhub_settings, self._browse_simhub)
+        self._path_row(paths, 6, "SimHub settings", self.simhub_settings, self._browse_simhub)
 
     def _path_row(
         self,
@@ -741,7 +783,13 @@ class SimControlsApp(tk.Tk):
         self.game_combo = ttk.Combobox(
             selectors,
             textvariable=self.game_name,
-            values=("iRacing", "Assetto Corsa", "ACC", "Le Mans Ultimate"),
+            values=(
+                "iRacing",
+                "Assetto Corsa",
+                "ACC",
+                "Assetto Corsa EVO",
+                "Le Mans Ultimate",
+            ),
             state="readonly",
         )
         self.game_combo.grid(row=1, column=0, sticky="ew", pady=(6, 0))
@@ -1052,6 +1100,7 @@ class SimControlsApp(tk.Tk):
         ac_root_text = self.assetto_corsa_root.get().strip()
         acc_root_text = self.acc_root.get().strip()
         lmu_root_text = self.lmu_root.get().strip()
+        evo_root_text = self.assetto_corsa_evo_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
         root = Path(root_text) if root_text else iracing.detect_iracing_directory()
         ac_root = (
@@ -1065,12 +1114,19 @@ class SimControlsApp(tk.Tk):
             if lmu_root_text
             else le_mans_ultimate.detect_lmu_directory()
         )
+        evo_root = (
+            Path(evo_root_text)
+            if evo_root_text
+            else assetto_corsa_evo.detect_assetto_corsa_evo_directory()
+        )
         settings = Path(settings_text) if settings_text else simhub.default_settings_path()
         self._watch_in_progress = True
 
         def worker() -> None:
             devices, _error = iracing.enumerate_connected_devices()
-            state = _source_signature(root, settings, devices, ac_root, acc_root, lmu_root)
+            state = _source_signature(
+                root, settings, devices, ac_root, acc_root, lmu_root, evo_root
+            )
             if not self._closing:
                 self.after(0, lambda: self._watch_complete(state))
 
@@ -1114,6 +1170,7 @@ class SimControlsApp(tk.Tk):
         ac_root_text = self.assetto_corsa_root.get().strip()
         acc_root_text = self.acc_root.get().strip()
         lmu_root_text = self.lmu_root.get().strip()
+        evo_root_text = self.assetto_corsa_evo_root.get().strip()
         settings_text = self.simhub_settings.get().strip()
 
         def task():
@@ -1121,6 +1178,7 @@ class SimControlsApp(tk.Tk):
             ac_root = Path(ac_root_text) if ac_root_text else None
             acc_root = Path(acc_root_text) if acc_root_text else None
             lmu_root = Path(lmu_root_text) if lmu_root_text else None
+            evo_root = Path(evo_root_text) if evo_root_text else None
             settings = Path(settings_text) if settings_text else None
             errors = {}
             try:
@@ -1144,6 +1202,11 @@ class SimControlsApp(tk.Tk):
                 lmu_discovery = None
                 errors["lmu"] = str(error)
             try:
+                evo_discovery = assetto_corsa_evo.discover(evo_root)
+            except Exception as error:
+                evo_discovery = None
+                errors["assetto_corsa_evo"] = str(error)
+            try:
                 inspection = simhub.inspect_control_mapper(settings)
             except Exception as error:
                 inspection = None
@@ -1157,6 +1220,11 @@ class SimControlsApp(tk.Tk):
             )
             watched_acc_root = acc_discovery.acc_directory if acc_discovery else acc_root
             watched_lmu_root = lmu_discovery.lmu_directory if lmu_discovery else lmu_root
+            watched_evo_root = (
+                evo_discovery.assetto_corsa_evo_directory
+                if evo_discovery
+                else evo_root
+            )
             watched_settings = inspection.settings_path if inspection else settings
             state = _source_signature(
                 watched_root,
@@ -1165,12 +1233,14 @@ class SimControlsApp(tk.Tk):
                 watched_ac_root,
                 watched_acc_root,
                 watched_lmu_root,
+                watched_evo_root,
             )
             return (
                 discovery,
                 ac_discovery,
                 acc_discovery,
                 lmu_discovery,
+                evo_discovery,
                 inspection,
                 devices,
                 errors,
@@ -1192,6 +1262,7 @@ class SimControlsApp(tk.Tk):
             self.assetto_corsa_discovery,
             self.acc_discovery,
             self.lmu_discovery,
+            self.assetto_corsa_evo_discovery,
             self.simhub_inspection,
             self.devices,
             errors,
@@ -1248,6 +1319,23 @@ class SimControlsApp(tk.Tk):
                 False,
             )
 
+        if self.assetto_corsa_evo_discovery:
+            self.assetto_corsa_evo_root.set(
+                str(self.assetto_corsa_evo_discovery.assetto_corsa_evo_directory)
+            )
+            evo_names = [
+                profile.name for profile in self.assetto_corsa_evo_discovery.profiles
+            ]
+            detail = f"{len(evo_names)} profile{'s' if len(evo_names) != 1 else ''}"
+            self._set_status_card("assetto_corsa_evo", "Connected", detail, True)
+        else:
+            self._set_status_card(
+                "assetto_corsa_evo",
+                "Not found",
+                errors.get("assetto_corsa_evo", "Choose the Saved Games\\ACE folder"),
+                False,
+            )
+
         self._update_profile_choices(previous_profile)
 
         if self.simhub_inspection:
@@ -1271,15 +1359,19 @@ class SimControlsApp(tk.Tk):
             self._set_status_card("device", "Not found", errors.get("device", "Enable SimHub virtual output"), False)
 
         selected_discovery = (
-            self.lmu_discovery
-            if self.game_name.get() == "Le Mans Ultimate"
+            self.assetto_corsa_evo_discovery
+            if self.game_name.get() == "Assetto Corsa EVO"
             else (
-                self.acc_discovery
-                if self.game_name.get() == "ACC"
+                self.lmu_discovery
+                if self.game_name.get() == "Le Mans Ultimate"
                 else (
-                    self.assetto_corsa_discovery
-                    if self.game_name.get() == "Assetto Corsa"
-                    else self.discovery
+                    self.acc_discovery
+                    if self.game_name.get() == "ACC"
+                    else (
+                        self.assetto_corsa_discovery
+                        if self.game_name.get() == "Assetto Corsa"
+                        else self.discovery
+                    )
                 )
             )
         )
@@ -1305,6 +1397,8 @@ class SimControlsApp(tk.Tk):
         detail_label.configure(text=detail)
 
     def _selected_game_id(self) -> str:
+        if self.game_name.get() == "Assetto Corsa EVO":
+            return "assetto_corsa_evo"
         if self.game_name.get() == "Le Mans Ultimate":
             return "lmu"
         if self.game_name.get() == "ACC":
@@ -1315,15 +1409,19 @@ class SimControlsApp(tk.Tk):
 
     def _update_profile_choices(self, preferred: str = "") -> None:
         discovery = (
-            self.lmu_discovery
-            if self._selected_game_id() == "lmu"
+            self.assetto_corsa_evo_discovery
+            if self._selected_game_id() == "assetto_corsa_evo"
             else (
-                self.acc_discovery
-                if self._selected_game_id() == "acc"
+                self.lmu_discovery
+                if self._selected_game_id() == "lmu"
                 else (
-                    self.assetto_corsa_discovery
-                    if self._selected_game_id() == "assetto_corsa"
-                    else self.discovery
+                    self.acc_discovery
+                    if self._selected_game_id() == "acc"
+                    else (
+                        self.assetto_corsa_discovery
+                        if self._selected_game_id() == "assetto_corsa"
+                        else self.discovery
+                    )
                 )
             )
         )
@@ -1338,6 +1436,7 @@ class SimControlsApp(tk.Tk):
         game_label = {
             "acc": "ACC",
             "lmu": "LE MANS ULTIMATE",
+            "assetto_corsa_evo": "ASSETTO CORSA EVO",
             "assetto_corsa": "ASSETTO CORSA",
             "iracing": "iRACING",
         }[self._selected_game_id()]
@@ -1351,17 +1450,22 @@ class SimControlsApp(tk.Tk):
         | assetto_corsa.ProfileCandidate
         | acc.ProfileCandidate
         | le_mans_ultimate.ProfileCandidate
+        | assetto_corsa_evo.ProfileCandidate
     ):
         discovery = (
-            self.lmu_discovery
-            if self._selected_game_id() == "lmu"
+            self.assetto_corsa_evo_discovery
+            if self._selected_game_id() == "assetto_corsa_evo"
             else (
-                self.acc_discovery
-                if self._selected_game_id() == "acc"
+                self.lmu_discovery
+                if self._selected_game_id() == "lmu"
                 else (
-                    self.assetto_corsa_discovery
-                    if self._selected_game_id() == "assetto_corsa"
-                    else self.discovery
+                    self.acc_discovery
+                    if self._selected_game_id() == "acc"
+                    else (
+                        self.assetto_corsa_discovery
+                        if self._selected_game_id() == "assetto_corsa"
+                        else self.discovery
+                    )
                 )
             )
         )
@@ -1428,6 +1532,9 @@ class SimControlsApp(tk.Tk):
                 if game_id == "acc":
                     inspection = acc.inspect_profile(profile)
                     plan = acc.plan_bindings(profile, catalog)
+                elif game_id == "assetto_corsa_evo":
+                    inspection = assetto_corsa_evo.inspect_profile(profile)
+                    plan = assetto_corsa_evo.plan_bindings(profile, catalog)
                 elif game_id == "lmu":
                     inspection = le_mans_ultimate.inspect_profile(profile)
                     plan = le_mans_ultimate.plan_bindings(profile, catalog)
@@ -1463,15 +1570,19 @@ class SimControlsApp(tk.Tk):
         for action_id, (current, target) in self.binding_rows.items():
             action = by_action.get(action_id)
             binding_text = (
-                _lmu_binding_text(action.binding if action else None)
-                if self.binding_plan_game == "lmu"
+                _assetto_corsa_evo_binding_text(action.binding if action else None)
+                if self.binding_plan_game == "assetto_corsa_evo"
                 else (
-                    _acc_binding_text(action.binding if action else None)
-                    if self.binding_plan_game == "acc"
+                    _lmu_binding_text(action.binding if action else None)
+                    if self.binding_plan_game == "lmu"
                     else (
-                        _assetto_corsa_binding_text(action.binding if action else None)
-                        if self.binding_plan_game == "assetto_corsa"
-                        else _binding_text(action.binding if action else None)
+                        _acc_binding_text(action.binding if action else None)
+                        if self.binding_plan_game == "acc"
+                        else (
+                            _assetto_corsa_binding_text(action.binding if action else None)
+                            if self.binding_plan_game == "assetto_corsa"
+                            else _binding_text(action.binding if action else None)
+                        )
                     )
                 )
             )
@@ -1529,6 +1640,7 @@ class SimControlsApp(tk.Tk):
         game_name = {
             "acc": "ACC",
             "lmu": "Le Mans Ultimate",
+            "assetto_corsa_evo": "Assetto Corsa EVO",
             "assetto_corsa": "Assetto Corsa",
             "iracing": "iRacing",
         }[game_id]
@@ -1558,6 +1670,13 @@ class SimControlsApp(tk.Tk):
                     _lmu_backup_directory(plan.profile.name),
                     validate=le_mans_ultimate.validate_controls_bytes,
                     is_target_in_use=le_mans_ultimate.is_lmu_running,
+                )
+            if game_id == "assetto_corsa_evo":
+                return apply_file_change(
+                    file_plan,
+                    _assetto_corsa_evo_backup_directory(),
+                    validate=assetto_corsa_evo.validate_controls_bytes,
+                    is_target_in_use=assetto_corsa_evo.is_assetto_corsa_evo_running,
                 )
             if game_id == "assetto_corsa":
                 return apply_file_change(
@@ -1622,6 +1741,14 @@ class SimControlsApp(tk.Tk):
             self.lmu_root.set(path)
             self.scan_setup()
 
+    def _browse_assetto_corsa_evo(self) -> None:
+        path = filedialog.askdirectory(
+            title="Choose your Saved Games\\ACE folder", parent=self
+        )
+        if path:
+            self.assetto_corsa_evo_root.set(path)
+            self.scan_setup()
+
     def _browse_simhub(self) -> None:
         path = filedialog.askopenfilename(
             title="Choose SimHub Control Mapper settings",
@@ -1634,15 +1761,19 @@ class SimControlsApp(tk.Tk):
 
     def _browse_receipt(self) -> None:
         initial = (
-            _lmu_backup_directory(self.profile_name.get() or "Preset")
-            if self._selected_game_id() == "lmu"
+            _assetto_corsa_evo_backup_directory()
+            if self._selected_game_id() == "assetto_corsa_evo"
             else (
-                _acc_backup_directory()
-                if self._selected_game_id() == "acc"
+                _lmu_backup_directory(self.profile_name.get() or "Preset")
+                if self._selected_game_id() == "lmu"
                 else (
-                    _assetto_corsa_backup_directory(self.profile_name.get() or "Live")
-                    if self._selected_game_id() == "assetto_corsa"
-                    else _backup_directory(self.profile_name.get() or "Legacy")
+                    _acc_backup_directory()
+                    if self._selected_game_id() == "acc"
+                    else (
+                        _assetto_corsa_backup_directory(self.profile_name.get() or "Live")
+                        if self._selected_game_id() == "assetto_corsa"
+                        else _backup_directory(self.profile_name.get() or "Legacy")
+                    )
                 )
             )
         )
@@ -1688,6 +1819,10 @@ class SimControlsApp(tk.Tk):
                 game_name = "ACC"
                 process_guard = acc.is_acc_running
                 validator = acc.validate_controls_bytes
+            elif original_name == assetto_corsa_evo.CONTROLS_FILE.name.casefold():
+                game_name = "Assetto Corsa EVO"
+                process_guard = assetto_corsa_evo.is_assetto_corsa_evo_running
+                validator = assetto_corsa_evo.validate_controls_bytes
             elif original_path.suffix.casefold() == ".ini":
                 game_name = "Assetto Corsa"
                 process_guard = assetto_corsa.is_assetto_corsa_running

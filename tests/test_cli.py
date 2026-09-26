@@ -11,6 +11,7 @@ from unittest import mock
 
 from sim_controls_manager import cli
 from sim_controls_manager.adapters import iracing
+from sim_controls_manager.adapters import assetto_corsa_evo as evo
 
 
 class CliTests(unittest.TestCase):
@@ -373,6 +374,73 @@ class CliTests(unittest.TestCase):
         self.assertEqual(restore_exit, 0)
         self.assertEqual(controls_path.read_bytes(), original)
 
+    def test_assetto_corsa_evo_apply_and_restore_end_to_end(self) -> None:
+        evo_root = self.root / "ACE"
+        evo_root.mkdir()
+        controls_path = evo_root / evo.CONTROLS_FILE
+        original = _minimal_evo_controls()
+        controls_path.write_bytes(original)
+        catalog_path = self._write_catalog(
+            {
+                "schemaVersion": 1,
+                "virtualDevice": {
+                    "provider": "simhub-control-mapper",
+                    "identity": "SimHub Virtual Controller",
+                    "instanceGuid": "11111111-1111-1111-1111-111111111111",
+                    "productGuid": "22222222-2222-2222-2222-222222222222",
+                },
+                "bindings": [
+                    {"actionId": "pit_limiter", "virtualButton": 7},
+                    {"actionId": "tc_increase", "virtualButton": 8},
+                    {"actionId": "tc_decrease", "virtualButton": 9},
+                ],
+            }
+        )
+        backups = self.root / "evo-backups"
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                cli, "_assetto_corsa_evo_backup_directory", return_value=backups
+            ),
+            mock.patch.object(
+                cli.assetto_corsa_evo,
+                "is_assetto_corsa_evo_running",
+                return_value=False,
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = cli.main(
+                [
+                    "assetto-corsa-evo",
+                    "apply",
+                    "--root",
+                    str(evo_root),
+                    "--catalog",
+                    str(catalog_path),
+                    "--yes",
+                    "--allow-active-profile",
+                ]
+            )
+        self.assertEqual(exit_code, 0, output.getvalue())
+        self.assertNotEqual(controls_path.read_bytes(), original)
+        inspection = evo.inspect_profile(
+            evo.ProfileCandidate("Live", controls_path, True, "protobuf")
+        )
+        self.assertEqual(inspection.actions[0].binding.native_button_index, 6)
+        receipt = next(backups.glob("*-receipt.json"))
+
+        with (
+            mock.patch.object(
+                cli.assetto_corsa_evo,
+                "is_assetto_corsa_evo_running",
+                return_value=False,
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            restore_exit = cli.main(["assetto-corsa-evo", "restore", str(receipt)])
+        self.assertEqual(restore_exit, 0)
+        self.assertEqual(controls_path.read_bytes(), original)
+
 
 def _minimal_iracing_controls() -> bytes:
     zero = b"\x00" * 16
@@ -462,6 +530,19 @@ def _minimal_lmu_controls() -> bytes:
         "Type": "Direct Input",
     }
     return json.dumps(value, indent="\t").replace("\n", "\r\n").encode("utf-8")
+
+
+def _minimal_evo_controls() -> bytes:
+    identity = b"".join(
+        (
+            evo._encode_length_field(1, b"SimHub Virtual Controller"),
+            evo._encode_length_field(2, b"11111111-1111-1111-1111-111111111111"),
+            evo._encode_length_field(5, b"22222222-2222-2222-2222-222222222222"),
+        )
+    )
+    controller = evo._encode_length_field(1, identity)
+    controller += evo._encode_length_field(2, evo._encode_command(110, 1, 20))
+    return evo._encode_length_field(1, controller)
 
 
 if __name__ == "__main__":

@@ -16,9 +16,9 @@ positional/extended batch is in
 replay batch is in [MEDIA_CONTROL_MAP.md](MEDIA_CONTROL_MAP.md). The full
 structured vocabulary is available from `sim_controls_manager.control_names`.
 
-**Status:** Windows GUI proof of concept with four provisional, write-capable
-adapters: iRacing, Assetto Corsa, Assetto Corsa Competizione, and Le Mans
-Ultimate. Each adapter
+**Status:** Windows GUI proof of concept with five provisional, write-capable
+adapters: iRacing, Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa
+EVO, and Le Mans Ultimate. Each adapter
 uses preview, conflict checks, process guards, verified backup, guarded apply,
 and receipt-based restore. Real SimHub virtual-device and in-game validation
 remain before any adapter is considered production-complete.
@@ -31,7 +31,7 @@ Launch the modern desktop interface with no arguments:
 python -m sim_controls_manager
 ```
 
-The app discovers iRacing, Assetto Corsa, ACC, and Le Mans Ultimate control profiles, reads the
+The app discovers iRacing, Assetto Corsa, ACC, AC EVO, and Le Mans Ultimate control profiles, reads the
 three supported SimHub Control Mapper roles, lists connected DirectInput
 controllers, previews exact binding changes, and applies them through the same
 verified backup and rollback path as the CLI. Live sync watches the simulator
@@ -74,7 +74,7 @@ not the same thing as a working adapter. The current implementation status is:
 | iRacing | **Built — provisional** | Discovers legacy and native profiles; inspects, previews, applies, and restores `PitSpeedLimiter`, `TractionControlInc`, and `TractionControlDec` in the binary GFCC format | Verify a real SimHub virtual controller and all three writes in game |
 | Assetto Corsa | **Built — provisional** | Discovers live controls and saved INI presets; previews, applies, and restores `[TCUP]` and `[TCDN]`; pit limiter is correctly reported as not exposed | Verify the virtual-controller `JOY` index and both shortcuts in game |
 | Assetto Corsa Competizione | **Built — provisional** | Discovers and validates live JSON; previews, applies, and restores `PitLimiter`, `IncreaseTC`, and `DecreaseTC` on a selected non-pedal device | Register the SimHub virtual controller in ACC and verify all three shortcuts in game |
-| Assetto Corsa EVO | **Needs adapter** | Native shortcut names are inventoried for the crosswalk only | Decode and validate the packed binding schema, device identity, button indexing, discovery, and safe write format |
+| Assetto Corsa EVO | **Built — experimental** | Decodes the installed protobuf descriptor and live device mapping; previews, applies, and restores `InputAction_Car_Pit_Limiter_Toggle` plus payloads 1/2 of `InputAction_Car_TractionControl_Cycle_X_2` | Register the SimHub DirectInput device in game, then verify button indexing and TC payload direction in AC EVO before treating writes as validated |
 | Automobilista 2 | **Needs adapter** | Installed control labels are inventoried for the crosswalk only | Decode the protected/binary `.sav` controller format and its multi-profile behavior before enabling writes |
 | Le Mans Ultimate | **Built — provisional** | Discovers JSON controller presets; previews, applies, and restores `Speed Limiter`, `Traction Control Up`, and `Traction Control Down` on the selected non-pedal SimHub device | Create a user preset containing the SimHub controller and verify device identity, the `32 + button - 1` DirectInput ID translation, and all three shortcuts in game |
 
@@ -254,6 +254,35 @@ SimControlsManagerCLI.exe acc restore <receipt-path>
 ACC must already list the SimHub virtual controller in `commandDevices`; launch
 the game and select/detect that controller once before applying shortcuts. ACC
 must be closed for apply and restore operations.
+
+### Assetto Corsa EVO adapter
+
+The experimental AC EVO adapter decodes
+`Saved Games\ACE\input_devices.inputdeviceconfiguration` using the protobuf
+message definitions embedded in the installed game executable. It is limited
+to the same three tablet shortcuts:
+
+- `pit_limiter` → `InputAction_Car_Pit_Limiter_Toggle`
+- `tc_increase` → payload 1 of `InputAction_Car_TractionControl_Cycle_X_2`
+- `tc_decrease` → payload 2 of `InputAction_Car_TractionControl_Cycle_X_2`
+
+It requires an existing, uniquely identifiable SimHub DirectInput controller
+record, converts SimHub's one-based button number to the game's zero-based
+index, rejects XInput and pedal devices, and preserves unrelated protobuf
+fields, axes, shifts, and commands. AC EVO currently exposes only a live device
+mapping, so apply requires both confirmation flags:
+
+```powershell
+SimControlsManagerCLI.exe assetto-corsa-evo discover
+SimControlsManagerCLI.exe assetto-corsa-evo inspect
+SimControlsManagerCLI.exe assetto-corsa-evo plan --catalog examples\catalog.example.json
+SimControlsManagerCLI.exe assetto-corsa-evo apply --catalog examples\catalog.example.json --yes --allow-active-profile
+SimControlsManagerCLI.exe assetto-corsa-evo restore <receipt-path>
+```
+
+This adapter remains **experimental** until the payload direction and resulting
+bindings are checked in AC EVO's controls screen and on track. Preview, backup,
+validation, process guard, rollback, and restore are implemented.
 
 ### Le Mans Ultimate adapter
 

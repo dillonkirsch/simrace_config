@@ -9,7 +9,13 @@ import sys
 from pathlib import Path
 
 from sim_controls_manager import simhub, updater
-from sim_controls_manager.adapters import acc, assetto_corsa, iracing, le_mans_ultimate
+from sim_controls_manager.adapters import (
+    acc,
+    assetto_corsa,
+    assetto_corsa_evo,
+    iracing,
+    le_mans_ultimate,
+)
 from sim_controls_manager.catalog import CatalogValidationError, validate_catalog
 from sim_controls_manager.file_change import (
     FileChangeError,
@@ -211,6 +217,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite a target changed since apply after reviewing it",
     )
+
+    evo_parser = commands.add_parser(
+        "assetto-corsa-evo",
+        help="Discover, inspect, preview, and safely update AC EVO shortcuts",
+    )
+    evo_commands = evo_parser.add_subparsers(dest="assetto_corsa_evo_command")
+    evo_discover = evo_commands.add_parser(
+        "discover", help="Find AC EVO's live device mapping without changing it"
+    )
+    evo_discover.add_argument("--root", type=Path, help="Exact Saved Games\\ACE path")
+    evo_inspect = evo_commands.add_parser("inspect", help="Inspect supported shortcuts")
+    evo_inspect.add_argument("--root", type=Path, help="Exact Saved Games\\ACE path")
+    evo_plan = evo_commands.add_parser("plan", help="Preview shortcut changes without writing")
+    _add_assetto_corsa_evo_binding_arguments(evo_plan)
+    evo_apply = evo_commands.add_parser(
+        "apply", help="Preview, back up, and apply shortcut changes"
+    )
+    _add_assetto_corsa_evo_binding_arguments(evo_apply)
+    evo_apply.add_argument("--yes", action="store_true", help="Confirm the previewed write")
+    evo_apply.add_argument(
+        "--allow-active-profile",
+        action="store_true",
+        help="Permit writing AC EVO's live device mapping",
+    )
+    evo_restore = evo_commands.add_parser(
+        "restore", help="Restore an AC EVO backup receipt"
+    )
+    evo_restore.add_argument("receipt", type=Path)
+    evo_restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite a target changed since apply after reviewing it",
+    )
     return parser
 
 
@@ -285,6 +324,33 @@ def main(argv: list[str] | None = None) -> int:
         return _apply_lmu(args.root, args.profile, args.catalog, args.yes)
     if args.command == "lmu" and args.lmu_command == "restore":
         return _restore_lmu(args.receipt, args.force)
+    if (
+        args.command == "assetto-corsa-evo"
+        and args.assetto_corsa_evo_command == "discover"
+    ):
+        return _discover_assetto_corsa_evo(args.root)
+    if (
+        args.command == "assetto-corsa-evo"
+        and args.assetto_corsa_evo_command == "inspect"
+    ):
+        return _inspect_assetto_corsa_evo(args.root)
+    if (
+        args.command == "assetto-corsa-evo"
+        and args.assetto_corsa_evo_command == "plan"
+    ):
+        return _plan_assetto_corsa_evo(args.root, args.catalog)
+    if (
+        args.command == "assetto-corsa-evo"
+        and args.assetto_corsa_evo_command == "apply"
+    ):
+        return _apply_assetto_corsa_evo(
+            args.root, args.catalog, args.yes, args.allow_active_profile
+        )
+    if (
+        args.command == "assetto-corsa-evo"
+        and args.assetto_corsa_evo_command == "restore"
+    ):
+        return _restore_assetto_corsa_evo(args.receipt, args.force)
 
     parser.error("a subcommand is required")
     return 2
@@ -1084,6 +1150,162 @@ def _lmu_backup_directory(profile_name: str) -> Path:
         for character in profile_name
     )
     return base / "sim-controls-manager" / "backups" / "lmu" / safe_profile
+
+
+def _discover_assetto_corsa_evo(root: Path | None) -> int:
+    try:
+        result = assetto_corsa_evo.discover(root)
+    except OSError as error:
+        print(f"Assetto Corsa EVO discovery failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Assetto Corsa EVO directory: {result.assetto_corsa_evo_directory}")
+    if result.profiles:
+        profile = result.profiles[0]
+        print(f"Profile: {profile.name} (live): {profile.controls_path}")
+    else:
+        print("Profiles: none")
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+    print("Read-only discovery complete; no files were changed.")
+    return 0
+
+
+def _assetto_corsa_evo_profile(root: Path | None) -> assetto_corsa_evo.ProfileCandidate:
+    discovery = assetto_corsa_evo.discover(root)
+    if len(discovery.profiles) != 1:
+        raise ValueError("AC EVO's live device profile was not found")
+    return discovery.profiles[0]
+
+
+def _inspect_assetto_corsa_evo(root: Path | None) -> int:
+    try:
+        profile = _assetto_corsa_evo_profile(root)
+        inspection = assetto_corsa_evo.inspect_profile(profile)
+    except (OSError, ValueError) as error:
+        print(f"Assetto Corsa EVO inspection failed: {error}", file=sys.stderr)
+        return 1
+    print("Profile: Live (live)")
+    print(f"File: {profile.controls_path}")
+    print(
+        f"Format: protobuf-style binary; {inspection.controller_count} controller(s); source verified"
+    )
+    for action in inspection.actions:
+        print(
+            f"- {action.action_id} -> {action.native_action}: "
+            f"{_format_assetto_corsa_evo_binding(action.binding)}"
+        )
+    print("Read-only inspection complete; no files were changed.")
+    return 0
+
+
+def _add_assetto_corsa_evo_binding_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", type=Path, help="Exact Saved Games\\ACE path")
+    parser.add_argument("--catalog", required=True, type=Path)
+
+
+def _build_assetto_corsa_evo_plan(
+    root: Path | None, catalog_path: Path
+) -> assetto_corsa_evo.BindingPlan:
+    return assetto_corsa_evo.plan_bindings(
+        _assetto_corsa_evo_profile(root), _load_catalog(catalog_path)
+    )
+
+
+def _print_assetto_corsa_evo_plan(plan: assetto_corsa_evo.BindingPlan) -> None:
+    print("Profile: Live (live)")
+    print(f"File: {plan.profile.controls_path}")
+    print(f"Source SHA-256: {plan.source_hash}")
+    if not plan.changes:
+        print("No changes: all requested shortcuts already match.")
+        return
+    print("Proposed shortcut changes:")
+    for change in plan.changes:
+        print(
+            f"- {change.action_id} -> {change.native_action}: "
+            f"{_format_assetto_corsa_evo_binding(change.before)} -> "
+            f"{_format_assetto_corsa_evo_binding(change.after)}"
+        )
+
+
+def _format_assetto_corsa_evo_binding(
+    binding: assetto_corsa_evo.NativeBinding,
+) -> str:
+    if binding.binding_type == "button" and binding.native_button_index is not None:
+        return (
+            f"button {binding.native_button_index + 1} "
+            f"on {binding.product_name or f'device {binding.device_index}'}"
+        )
+    return binding.binding_type
+
+
+def _plan_assetto_corsa_evo(root: Path | None, catalog_path: Path) -> int:
+    try:
+        plan = _build_assetto_corsa_evo_plan(root, catalog_path)
+    except (OSError, ValueError, CatalogValidationError) as error:
+        print(f"Assetto Corsa EVO plan failed: {error}", file=sys.stderr)
+        return 1
+    _print_assetto_corsa_evo_plan(plan)
+    print("Preview only; no files were changed.")
+    return 0
+
+
+def _apply_assetto_corsa_evo(
+    root: Path | None,
+    catalog_path: Path,
+    confirmed: bool,
+    allow_active_profile: bool,
+) -> int:
+    try:
+        binding_plan = _build_assetto_corsa_evo_plan(root, catalog_path)
+        _print_assetto_corsa_evo_plan(binding_plan)
+        if not binding_plan.changes:
+            return 0
+        if not allow_active_profile:
+            raise ValueError(
+                "refusing to write AC EVO's live device mapping; pass "
+                "--allow-active-profile after reviewing the preview"
+            )
+        if not confirmed:
+            print("Preview only. Re-run with --yes to back up and apply these changes.")
+            return 0
+        file_plan = plan_file_change(
+            binding_plan.profile.controls_path, binding_plan.next_bytes
+        )
+        if file_plan.source_hash != binding_plan.source_hash:
+            raise FileChangeError(
+                "SOURCE_CHANGED", "AC EVO controls changed while the plan was prepared"
+            )
+        result = apply_file_change(
+            file_plan,
+            _assetto_corsa_evo_backup_directory(),
+            validate=assetto_corsa_evo.validate_controls_bytes,
+            is_target_in_use=assetto_corsa_evo.is_assetto_corsa_evo_running,
+        )
+    except (OSError, ValueError, CatalogValidationError, FileChangeError) as error:
+        print(f"Assetto Corsa EVO apply failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Applied with verified backup. Restore receipt: {result.receipt_path}")
+    return 0
+
+
+def _restore_assetto_corsa_evo(receipt_path: Path, force: bool) -> int:
+    try:
+        result = restore_file(
+            receipt_path,
+            allow_changed_target=force,
+            is_target_in_use=assetto_corsa_evo.is_assetto_corsa_evo_running,
+            validate=assetto_corsa_evo.validate_controls_bytes,
+        )
+    except (OSError, ValueError, FileChangeError) as error:
+        print(f"Assetto Corsa EVO restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"Restore status: {result.status}")
+    return 0
+
+
+def _assetto_corsa_evo_backup_directory() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "sim-controls-manager" / "backups" / "assetto-corsa-evo" / "Live"
 
 
 if __name__ == "__main__":

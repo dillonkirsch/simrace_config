@@ -5,6 +5,9 @@ from unittest import mock
 
 from sim_controls_manager.adapters.assetto_corsa import NativeBinding as ACNativeBinding
 from sim_controls_manager.adapters.acc import NativeBinding as ACCNativeBinding
+from sim_controls_manager.adapters.assetto_corsa_evo import (
+    NativeBinding as EVONativeBinding,
+)
 from sim_controls_manager.adapters.iracing import DeviceInfo, NativeBinding
 from sim_controls_manager.adapters.le_mans_ultimate import NativeBinding as LMUNativeBinding
 from sim_controls_manager import gui
@@ -13,6 +16,7 @@ from sim_controls_manager.gui import (
     _binding_text,
     _assetto_corsa_binding_text,
     _acc_binding_text,
+    _assetto_corsa_evo_binding_text,
     _lmu_binding_text,
     _matching_control_ids,
     _matching_tablet_shortcut_ids,
@@ -22,6 +26,12 @@ from sim_controls_manager.gui import (
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_formats_evo_button_as_user_facing_one_based(self) -> None:
+        binding = EVONativeBinding("button", 6, 1, "instance", "SimHub", None)
+        self.assertEqual(
+            _assetto_corsa_evo_binding_text(binding), "Button 7 • SimHub"
+        )
+
     def test_formats_lmu_button_as_simhub_one_based(self) -> None:
         binding = LMUNativeBinding("button", 38, 7, "virtual-key", "SimHub")
         self.assertEqual(_lmu_binding_text(binding), "Button 7 • SimHub")
@@ -144,6 +154,20 @@ class GuiFormattingTests(unittest.TestCase):
                 lmu_root,
             )
             self.assertNotEqual(with_acc, with_lmu)
+
+            evo_root = root / "ACE"
+            evo_root.mkdir()
+            (evo_root / "input_devices.inputdeviceconfiguration").write_bytes(b"test")
+            with_evo = _source_signature(
+                root,
+                settings,
+                (DeviceInfo("instance", "product", "SimHub vJoy"),),
+                ac_root,
+                acc_root,
+                lmu_root,
+                evo_root,
+            )
+            self.assertNotEqual(with_lmu, with_evo)
 
     def test_smoke_mode_builds_and_closes_without_starting_event_loop(self) -> None:
         with mock.patch.object(gui, "SimControlsApp") as app_type:

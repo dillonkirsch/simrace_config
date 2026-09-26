@@ -31,7 +31,7 @@ Windows sim racers who use multiple games and already use, or are willing to con
 - Keyboard macros and multi-step menu navigation.
 - Live edits while a sim is running.
 - Axes, calibration, wheel force feedback, car-specific setup values, and cloud sync.
-- Promising write support for AC EVO or AMS2 before their formats and reload behavior are verified.
+- Promising production-ready write support for AC EVO or any write support for AMS2 before their formats and reload behavior are verified.
 
 ## Design principles
 
