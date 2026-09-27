@@ -62,9 +62,14 @@ use high-contrast line icons, can be swapped by dragging, and expose editable
 labels, icons, colors, and per-simulator shortcuts. Pages can be added, renamed,
 deleted, or resized to 5×3, 6×4, 8×4, or 10×5.
 
-The desktop UI uses the **Precision Night** visual system: a compact navigation
-rail, variable-display typography, low-contrast cockpit surfaces, purpose-led
-status colors, and a dedicated Deck Studio canvas sized for touch interaction.
+The desktop UI uses a shared graphite design system with layered workspaces,
+Segoe typography, readable controls, and compact native navigation. Overview
+shows readiness and pending work; Bindings pairs the mapping editor with a
+change inspector; Recovery lists dated, verified receipts with restore details.
+Control Map keeps its frozen action column, filters, and column controls, while
+Deck Studio pairs its canvas with a contextual inspector and visible save state.
+Use Ctrl+1–5 to switch tools, Ctrl+F to search Control Map, and Ctrl+S to save a deck.
+See [DESIGN.md](DESIGN.md) for the design system and native visual QA procedure.
 
 When an available action has no shortcut, the designer suggests a low-collision
 key beginning with F13–F24 and then modified variants. **Fill open keys** assigns

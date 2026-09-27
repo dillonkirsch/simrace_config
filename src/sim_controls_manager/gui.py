@@ -7,12 +7,17 @@ import os
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, ttk
 from typing import Callable, TypeVar
 
 from sim_controls_manager import deck_layout, simhub, transfer, updater
+from sim_controls_manager import ui_dialogs as messagebox
+from sim_controls_manager import ui_dialogs as simpledialog
+from sim_controls_manager.ui_theme import COLORS, TYPE, SPACING, FONT_TEXT, FONT_DISPLAY, FONT_ICON, Tooltip, dark_caption, label
+from sim_controls_manager.ui_workspaces import WorkspaceUI
 from sim_controls_manager.adapters import (
     acc,
     assetto_corsa,
@@ -38,57 +43,6 @@ from sim_controls_manager.file_change import (
 
 T = TypeVar("T")
 
-
-# Neutral, low-chroma surfaces keep color available for meaning.  These tokens
-# are intentionally the only palette used by the presentation layer.
-COLORS = {
-    "canvas": "#090A0C",
-    "workspace": "#0F1012",
-    "sidebar": "#0B0C0E",
-    "surface": "#16181B",
-    "surface_alt": "#121417",
-    "raised": "#1D2024",
-    "hover": "#24272C",
-    "header": "#191B1F",
-    "selection": "#1B2533",
-    "selection_key": "#192A43",
-    "border": "#2B2E34",
-    "line": "#21242A",
-    "text": "#F3F4F6",
-    "muted": "#A5A9B1",
-    "subtle": "#70757F",
-    "accent": "#55D6A9",
-    "accent_soft": "#13251F",
-    "primary": "#4D86EE",
-    "primary_hover": "#6398F5",
-    "primary_pressed": "#3F73D1",
-    "warning": "#E4AC55",
-    "danger": "#EE6B76",
-    "danger_soft": "#2B191D",
-}
-
-FONT_TEXT = "Segoe UI Variable Text"
-FONT_DISPLAY = "Segoe UI Variable Display"
-FONT_ICON = "Segoe Fluent Icons"
-
-SPACING = {
-    "xs": 4,
-    "sm": 8,
-    "md": 12,
-    "lg": 18,
-    "xl": 24,
-    "xxl": 32,
-}
-
-TYPE = {
-    "title": (FONT_DISPLAY, 21, "bold"),
-    "section": (FONT_DISPLAY, 12, "bold"),
-    "body": (FONT_TEXT, 10),
-    "secondary": (FONT_TEXT, 9),
-    "label": (FONT_TEXT, 9, "bold"),
-    "metadata": (FONT_TEXT, 8),
-    "mono": ("Cascadia Mono", 9),
-}
 
 AUTO_REFRESH_MS = 2500
 
@@ -359,7 +313,7 @@ def _source_signature(
     return tuple(_path_signature(path) for path in paths), device_signature
 
 
-class SimControlsApp(tk.Tk):
+class SimControlsApp(WorkspaceUI, tk.Tk):
     """Single-window, preview-first desktop workflow."""
 
     def __init__(self) -> None:
@@ -428,6 +382,7 @@ class SimControlsApp(tk.Tk):
         except ValueError as error:
             self.tablet_layout = deck_layout.default_layout()
             self.tablet_layout_warning = str(error)
+        self._saved_deck_snapshot = deck_layout.layout_to_dict(self.tablet_layout) if self.tablet_layout_path.exists() else None
         self.deck_assigned_on_load = deck_layout.assign_missing_shortcuts(
             self.tablet_layout
         )
@@ -447,6 +402,7 @@ class SimControlsApp(tk.Tk):
         self.deck_game = tk.StringVar(value=next(iter(GAMES.values())))
         self.deck_shortcut = tk.StringVar()
         self.deck_status = tk.StringVar(value="Drag a tile to arrange your deck.")
+        self.deck_save_status = tk.StringVar(value="Unsaved layout")
 
         self._configure_styles()
         self._build_shell()
@@ -456,24 +412,7 @@ class SimControlsApp(tk.Tk):
         self._schedule_watch()
 
     def _enable_dark_title_bar(self) -> None:
-        """Ask Windows to draw the native caption using the app's dark theme."""
-
-        if sys.platform != "win32":
-            return
-        try:
-            window_handle = ctypes.windll.user32.GetParent(self.winfo_id())
-            enabled = ctypes.c_int(1)
-            for attribute in (20, 19):
-                result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    window_handle,
-                    attribute,
-                    ctypes.byref(enabled),
-                    ctypes.sizeof(enabled),
-                )
-                if result == 0:
-                    break
-        except (AttributeError, OSError, tk.TclError):
-            pass
+        dark_caption(self)
 
     def _set_icon(self) -> None:
         asset_roots = []
@@ -516,7 +455,15 @@ class SimControlsApp(tk.Tk):
         style.theme_use("clam")
 
         # Surfaces and typography
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
+            tkfont.nametofont(name).configure(family=FONT_TEXT, size=-13)
+        self.option_add("*TCombobox*Listbox.background", COLORS["raised"])
+        self.option_add("*TCombobox*Listbox.foreground", COLORS["text"])
+        self.option_add("*TCombobox*Listbox.selectBackground", COLORS["selection_key"])
+        self.option_add("*TCombobox*Listbox.selectForeground", COLORS["text"])
         style.configure("TFrame", background=COLORS["workspace"])
+        style.configure("Sidebar.TCheckbutton", background=COLORS["sidebar"], foreground=COLORS["muted"], font=TYPE["secondary"])
+        style.map("Sidebar.TCheckbutton", background=[("active", COLORS["sidebar"])], foreground=[("active", COLORS["text"])])
         style.configure("Workspace.TFrame", background=COLORS["workspace"])
         style.configure(
             "Surface.TFrame",
@@ -714,7 +661,7 @@ class SimControlsApp(tk.Tk):
             bordercolor=COLORS["surface"],
             lightcolor=COLORS["surface"],
             darkcolor=COLORS["surface"],
-            rowheight=34,
+            rowheight=36,
             font=TYPE["secondary"],
         )
         style.layout(
@@ -750,7 +697,7 @@ class SimControlsApp(tk.Tk):
             bordercolor=COLORS["surface_alt"],
             lightcolor=COLORS["surface_alt"],
             darkcolor=COLORS["surface_alt"],
-            rowheight=34,
+            rowheight=36,
             font=TYPE["label"],
         )
         style.layout(
@@ -814,6 +761,16 @@ class SimControlsApp(tk.Tk):
             lightcolor=COLORS["surface"],
             darkcolor=COLORS["surface"],
         )
+        self._tab_images = []
+        for color in ("surface_alt", "selection_key", "hover"):
+            photo = tk.PhotoImage(width=8, height=8)
+            photo.put(COLORS[color], to=(0, 0, 8, 8))
+            self._tab_images.append(photo)
+        style.element_create("Workspace.tab", "image", self._tab_images[0],
+                             ("selected", self._tab_images[1]), ("active", self._tab_images[2]),
+                             border=2, sticky="nsew")
+        style.layout("Deck.TNotebook.Tab", [("Workspace.tab", {"sticky": "nswe", "children": [("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [("Notebook.label", {"side": "top", "sticky": ""})]})]})])
+        style.configure("Deck.TNotebook.Tab", borderwidth=0, relief="flat")
         style.map(
             "Deck.TNotebook.Tab",
             background=[
@@ -822,171 +779,24 @@ class SimControlsApp(tk.Tk):
             ],
             foreground=[("selected", COLORS["text"]), ("active", COLORS["text"])],
         )
+        self._check_images = []
+        for selected, disabled in ((False, False), (True, False), (False, True)):
+            photo = tk.PhotoImage(width=16, height=16)
+            photo.put(COLORS["border"], to=(1, 1, 15, 15))
+            photo.put(COLORS["primary"] if selected else COLORS["raised"], to=(2, 2, 14, 14))
+            if selected:
+                for x, y in ((4, 7), (5, 8), (6, 9), (7, 8), (8, 7), (9, 6), (10, 5), (11, 4)):
+                    photo.put(COLORS["text"], to=(x, y, x+2, y+2))
+            if disabled:
+                photo.put(COLORS["surface_alt"], to=(2, 2, 14, 14))
+            self._check_images.append(photo)
+        style.element_create("Workspace.check", "image", self._check_images[0],
+                             ("disabled", self._check_images[2]), ("selected", self._check_images[1]))
+        style.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
+            ("Workspace.check", {"side": "left", "sticky": ""}),
+            ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [("Checkbutton.label", {"sticky": "nswe"})]})]})])
+        style.configure("TCheckbutton", padding=(0, 4))
 
-    def _build_shell(self) -> None:
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
-
-        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=176)
-        sidebar.grid(row=0, column=0, sticky="nsw")
-        sidebar.grid_propagate(False)
-        sidebar.columnconfigure(0, weight=1)
-
-        brand = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        brand.grid(row=0, column=0, sticky="ew", padx=18, pady=(20, 28))
-        tk.Label(
-            brand,
-            text="◈",
-            bg=COLORS["sidebar"],
-            fg=COLORS["primary_hover"],
-            font=(FONT_TEXT, 16),
-        ).pack(side="left", padx=(0, 9))
-        tk.Label(
-            brand,
-            text="Sim Controls",
-            bg=COLORS["sidebar"],
-            fg=COLORS["text"],
-            font=(FONT_DISPLAY, 11, "bold"),
-        ).pack(side="left")
-
-        self.nav_buttons: dict[str, tk.Button] = {}
-        self.nav_rows: dict[str, tk.Frame] = {}
-        self.nav_indicators: dict[str, tk.Frame] = {}
-        self.nav_icons: dict[str, tk.Label] = {}
-        for index, (page, icon, label) in enumerate(
-            (
-                ("dashboard", "\ue80f", "Overview"),
-                ("controls", "\ueca5", "Deck Studio"),
-                ("control_map", "\ue8fd", "Control Map"),
-                ("bindings", "\ue8ab", "Bindings"),
-                ("recovery", "\ue81c", "Recovery"),
-            ),
-            start=1,
-        ):
-            row = tk.Frame(sidebar, bg=COLORS["sidebar"], height=40)
-            row.grid(row=index, column=0, sticky="ew", padx=7, pady=1)
-            row.pack_propagate(False)
-            indicator = tk.Frame(row, bg=COLORS["sidebar"], width=2)
-            indicator.pack(side="left", fill="y")
-            icon_label = tk.Label(
-                row,
-                text=icon,
-                bg=COLORS["sidebar"],
-                fg=COLORS["subtle"],
-                font=(FONT_ICON, 11),
-                width=3,
-                cursor="hand2",
-            )
-            icon_label.pack(side="left", fill="y")
-            button = tk.Button(
-                row,
-                text=label,
-                anchor="w",
-                command=lambda name=page: self.show_page(name),
-                bg=COLORS["sidebar"],
-                fg=COLORS["muted"],
-                activebackground=COLORS["raised"],
-                activeforeground=COLORS["text"],
-                relief="flat",
-                bd=0,
-                padx=2,
-                pady=8,
-                font=TYPE["label"],
-                cursor="hand2",
-                takefocus=True,
-            )
-            button.pack(side="left", fill="both", expand=True)
-            icon_label.bind("<Button-1>", lambda _event, name=page: self.show_page(name))
-            self.nav_buttons[page] = button
-            self.nav_rows[page] = row
-            self.nav_indicators[page] = indicator
-            self.nav_icons[page] = icon_label
-
-        version = updater.current_version()
-        sidebar_footer = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        sidebar_footer.grid(row=7, column=0, sticky="sew", padx=18, pady=16)
-        tk.Label(
-            sidebar_footer,
-            text="●  Live monitoring",
-            bg=COLORS["sidebar"],
-            fg=COLORS["accent"],
-            font=TYPE["metadata"],
-        ).pack(anchor="w")
-        tk.Label(
-            sidebar_footer,
-            text=f"Safe writes · {version}",
-            bg=COLORS["sidebar"],
-            fg=COLORS["subtle"],
-            font=TYPE["metadata"],
-        ).pack(anchor="w", pady=(5, 0))
-        sidebar.rowconfigure(6, weight=1)
-
-        content = ttk.Frame(self, style="Workspace.TFrame")
-        content.grid(row=0, column=1, sticky="nsew")
-        content.columnconfigure(0, weight=1)
-        content.rowconfigure(0, weight=1)
-        content.rowconfigure(1, minsize=32)
-
-        self.pages = {}
-        page_padding = {
-            "dashboard": (34, 24, 34, 12),
-            "controls": (24, 18, 24, 8),
-            "control_map": (20, 16, 20, 6),
-            "bindings": (34, 24, 34, 12),
-            "recovery": (34, 24, 34, 12),
-        }
-        for name in ("dashboard", "controls", "control_map", "bindings", "recovery"):
-            page = ttk.Frame(
-                content,
-                style="Workspace.TFrame",
-                padding=page_padding[name],
-            )
-            page.grid(row=0, column=0, sticky="nsew")
-            self.pages[name] = page
-
-        self._build_dashboard(self.pages["dashboard"])
-        self._build_control_names(self.pages["controls"])
-        self._build_control_map(self.pages["control_map"])
-        self._build_bindings(self.pages["bindings"])
-        self._build_recovery(self.pages["recovery"])
-
-        footer = tk.Frame(content, bg=COLORS["surface_alt"], height=29)
-        footer.grid(row=1, column=0, sticky="ew")
-        footer.grid_propagate(False)
-        self.footer_dot = tk.Label(
-            footer,
-            text="●",
-            bg=COLORS["surface_alt"],
-            fg=COLORS["accent"],
-            font=(FONT_TEXT, 7),
-        )
-        self.footer_dot.pack(side="left", padx=(18, 7))
-        tk.Label(
-            footer,
-            textvariable=self.footer_status,
-            bg=COLORS["surface_alt"],
-            fg=COLORS["muted"],
-            font=TYPE["metadata"],
-        ).pack(side="left")
-        self.footer_context = tk.StringVar(value="Overview")
-        tk.Label(
-            footer,
-            textvariable=self.footer_context,
-            bg=COLORS["surface_alt"],
-            fg=COLORS["subtle"],
-            font=TYPE["metadata"],
-        ).pack(side="right", padx=18)
-
-        self.show_page("dashboard")
-
-    def _page_heading(self, parent: ttk.Frame, title: str, description: str) -> None:
-        ttk.Label(parent, text=title, style="Title.TLabel").pack(anchor="w")
-        ttk.Label(
-            parent,
-            text=description,
-            foreground=COLORS["muted"],
-            font=TYPE["secondary"],
-        ).pack(anchor="w", pady=(3, 16))
 
     def _card(self, parent: tk.Misc, **pack_options) -> ttk.Frame:
         card = ttk.Frame(
@@ -997,196 +807,6 @@ class SimControlsApp(tk.Tk):
         card.pack(**pack_options)
         return card
 
-    def _build_dashboard(self, page: ttk.Frame) -> None:
-        viewport = ttk.Frame(page, style="Workspace.TFrame")
-        viewport.pack(fill="both", expand=True)
-        viewport.columnconfigure(0, weight=1)
-        viewport.rowconfigure(0, weight=1)
-        self.dashboard_canvas = tk.Canvas(
-            viewport,
-            bg=COLORS["workspace"],
-            highlightthickness=0,
-            bd=0,
-        )
-        self.dashboard_canvas.grid(row=0, column=0, sticky="nsew")
-        self.dashboard_scrollbar = ttk.Scrollbar(
-            viewport,
-            orient="vertical",
-            command=self.dashboard_canvas.yview,
-            style="Slim.Vertical.TScrollbar",
-        )
-        self.dashboard_canvas.configure(yscrollcommand=self.dashboard_scrollbar.set)
-        dashboard_body = ttk.Frame(
-            self.dashboard_canvas,
-            style="Workspace.TFrame",
-        )
-        self.dashboard_window = self.dashboard_canvas.create_window(
-            (0, 0),
-            window=dashboard_body,
-            anchor="nw",
-        )
-        dashboard_body.bind("<Configure>", self._dashboard_frame_configured)
-        self.dashboard_canvas.bind("<Configure>", self._dashboard_canvas_configured)
-        self.bind_all("<MouseWheel>", self._dashboard_mousewheel, add="+")
-
-        self._page_heading(
-            dashboard_body,
-            "Overview",
-            "A quiet summary of your simulator profiles, mappings, and live connections.",
-        )
-
-        hero = ttk.Frame(dashboard_body, style="Workspace.TFrame", padding=(0, 8, 0, 18))
-        hero.pack(fill="x")
-        hero.columnconfigure(0, weight=1)
-        hero.columnconfigure(1, weight=0)
-        tk.Label(
-            hero,
-            textvariable=self.preview_summary,
-            bg=COLORS["workspace"],
-            fg=COLORS["text"],
-            font=(FONT_DISPLAY, 18, "bold"),
-        ).grid(row=0, column=0, sticky="w")
-        tk.Label(
-            hero,
-            textvariable=self.last_refreshed,
-            bg=COLORS["workspace"],
-            fg=COLORS["muted"],
-            font=TYPE["secondary"],
-        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
-        live_controls = ttk.Frame(hero, style="Workspace.TFrame")
-        live_controls.grid(row=0, column=1, rowspan=2, padx=(24, 0), sticky="e")
-        ttk.Checkbutton(
-            live_controls,
-            text="Live sync",
-            variable=self.auto_refresh,
-            command=self._auto_refresh_changed,
-            style="Live.TCheckbutton",
-        ).pack(side="left", padx=(0, 12))
-        self.scan_button = self._button(
-            live_controls,
-            "Refresh",
-            self.scan_setup,
-            icon="↻",
-        )
-        self.scan_button.pack(side="left")
-
-        ttk.Label(
-            dashboard_body,
-            text="Simulator status",
-            style="Section.TLabel",
-        ).pack(anchor="w", pady=(2, 9))
-        status_grid = ttk.Frame(dashboard_body, style="Workspace.TFrame")
-        status_grid.pack(fill="x")
-        for column in range(2):
-            status_grid.columnconfigure(column, weight=1, uniform="status")
-        self.status_cards: dict[str, tuple[tk.Label, tk.Label, tk.Label]] = {}
-        for index, (key, title) in enumerate(
-            (
-                ("iracing", "iRacing"),
-                ("assetto_corsa", "Assetto Corsa"),
-                ("acc", "ACC"),
-                ("assetto_corsa_evo", "Assetto Corsa EVO"),
-                ("automobilista_2", "Automobilista 2"),
-                ("lmu", "Le Mans Ultimate"),
-                ("simhub", "SimHub"),
-                ("device", "Virtual controller"),
-            )
-        ):
-            outer = ttk.Frame(status_grid, style="SurfaceAlt.TFrame", padding=(12, 10))
-            outer.grid(
-                row=index // 2,
-                column=index % 2,
-                sticky="nsew",
-                padx=(0 if index % 2 == 0 else 4, 4 if index % 2 == 0 else 0),
-                pady=(0, 8),
-            )
-            outer.columnconfigure(1, weight=1)
-            dot = tk.Label(
-                outer,
-                text="●",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["subtle"],
-                font=(FONT_TEXT, 7),
-            )
-            dot.grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 10), pady=(3, 0))
-            tk.Label(
-                outer,
-                text=title,
-                bg=COLORS["surface_alt"],
-                fg=COLORS["text"],
-                font=TYPE["label"],
-            ).grid(row=0, column=1, sticky="w")
-            value = tk.Label(
-                outer,
-                text="Not scanned",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["muted"],
-                font=TYPE["secondary"],
-                wraplength=180,
-                justify="left",
-            )
-            value.grid(row=0, column=2, sticky="e", padx=(12, 0))
-            detail = tk.Label(
-                outer,
-                text="Waiting",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["subtle"],
-                font=TYPE["metadata"],
-                wraplength=320,
-                justify="left",
-            )
-            detail.grid(row=1, column=1, columnspan=2, sticky="w", pady=(3, 0))
-            self.status_cards[key] = (dot, value, detail)
-
-        source_section = ttk.Frame(dashboard_body, style="Workspace.TFrame")
-        source_section.pack(fill="x", pady=(10, 0))
-        self.source_disclosure = self._button(
-            source_section,
-            "›  Source locations",
-            self._toggle_source_locations,
-            ghost=True,
-        )
-        self.source_disclosure.pack(anchor="w")
-        paths = ttk.Frame(source_section, style="Surface.TFrame", padding=14)
-        self.source_locations_panel = paths
-        paths.columnconfigure(1, weight=1)
-        self._path_row(paths, 0, "iRacing folder", self.iracing_root, self._browse_iracing)
-        self._path_row(
-            paths,
-            1,
-            "Assetto Corsa folder",
-            self.assetto_corsa_root,
-            self._browse_assetto_corsa,
-        )
-        self._path_row(
-            paths,
-            2,
-            "ACC folder",
-            self.acc_root,
-            self._browse_acc,
-        )
-        self._path_row(
-            paths,
-            3,
-            "Assetto Corsa EVO folder",
-            self.assetto_corsa_evo_root,
-            self._browse_assetto_corsa_evo,
-        )
-        self._path_row(
-            paths,
-            4,
-            "Automobilista 2 folder",
-            self.automobilista_2_root,
-            self._browse_automobilista_2,
-        )
-        self._path_row(
-            paths,
-            5,
-            "Le Mans Ultimate folder",
-            self.lmu_root,
-            self._browse_lmu,
-        )
-        self._path_row(paths, 6, "SimHub settings", self.simhub_settings, self._browse_simhub)
 
     def _toggle_source_locations(self) -> None:
         self.source_locations_visible = not self.source_locations_visible
@@ -1198,20 +818,6 @@ class SimControlsApp(tk.Tk):
             self.source_disclosure.configure(text="›  Source locations")
         self.after_idle(self._update_dashboard_scrollbar)
 
-    def _dashboard_frame_configured(self, _event: tk.Event) -> None:
-        self.dashboard_canvas.configure(
-            scrollregion=self.dashboard_canvas.bbox("all")
-        )
-        self.after_idle(self._update_dashboard_scrollbar)
-
-    def _dashboard_canvas_configured(self, event: tk.Event) -> None:
-        content_width = min(event.width, 980)
-        self.dashboard_canvas.itemconfigure(self.dashboard_window, width=content_width)
-        self.dashboard_canvas.coords(
-            self.dashboard_window,
-            (max(0, (event.width - content_width) / 2), 0),
-        )
-        self.after_idle(self._update_dashboard_scrollbar)
 
     def _update_dashboard_scrollbar(self) -> None:
         bounds = self.dashboard_canvas.bbox("all")
@@ -1255,148 +861,12 @@ class SimControlsApp(tk.Tk):
         button.configure(pady=6)
         button.grid(row=row, column=2, padx=(10, 0), pady=2)
 
-    def _build_bindings(self, page: ttk.Frame) -> None:
-        self._page_heading(
-            page,
-            "Bindings",
-            "Review the path from each simulator action to its SimHub target before applying changes.",
-        )
-
-        focused = ttk.Frame(page, style="Workspace.TFrame", width=820)
-        focused.pack(anchor="n")
-        focused.columnconfigure(0, weight=1)
-
-        selectors = ttk.Frame(focused, style="SurfaceAlt.TFrame", padding=(14, 12))
-        selectors.grid(row=0, column=0, sticky="ew")
-        selectors.columnconfigure(0, weight=1)
-        selectors.columnconfigure(1, weight=1)
-        selectors.columnconfigure(2, weight=1)
-        ttk.Label(selectors, text="Simulator", style="Muted.SurfaceAlt.TLabel").grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(selectors, text="Profile", style="Muted.SurfaceAlt.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(14, 0)
-        )
-        ttk.Label(selectors, text="Virtual controller", style="Muted.SurfaceAlt.TLabel").grid(
-            row=0, column=2, sticky="w", padx=(14, 0)
-        )
-        self.game_combo = ttk.Combobox(
-            selectors,
-            textvariable=self.game_name,
-            values=(
-                "iRacing",
-                "Assetto Corsa",
-                "ACC",
-                "Assetto Corsa EVO",
-                "Le Mans Ultimate",
-            ),
-            state="readonly",
-        )
-        self.game_combo.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        self.game_combo.bind("<<ComboboxSelected>>", self._game_selection_changed)
-        self.profile_combo = ttk.Combobox(selectors, textvariable=self.profile_name, state="readonly")
-        self.profile_combo.grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(6, 0))
-        self.profile_combo.bind("<<ComboboxSelected>>", self._selection_changed)
-        self.device_combo = ttk.Combobox(selectors, textvariable=self.device_name, state="readonly")
-        self.device_combo.grid(row=1, column=2, sticky="ew", padx=(14, 0), pady=(6, 0))
-        self.device_combo.bind("<<ComboboxSelected>>", self._selection_changed)
-
-        column_headings = ttk.Frame(focused, style="Workspace.TFrame", padding=(14, 16, 14, 7))
-        column_headings.grid(row=1, column=0, sticky="ew")
-        column_headings.columnconfigure(0, minsize=230)
-        column_headings.columnconfigure(1, minsize=220)
-        column_headings.columnconfigure(2, minsize=34)
-        column_headings.columnconfigure(3, minsize=220)
-        ttk.Label(column_headings, text="Simulator action", foreground=COLORS["muted"], font=TYPE["metadata"]).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(
-            column_headings,
-            textvariable=self.current_binding_heading,
-            foreground=COLORS["muted"],
-            font=TYPE["metadata"],
-        ).grid(row=0, column=1, sticky="w")
-        ttk.Label(column_headings, text="SimHub target", foreground=COLORS["muted"], font=TYPE["metadata"]).grid(
-            row=0, column=3, sticky="w"
-        )
-
-        rows = ttk.Frame(focused, style="Workspace.TFrame")
-        rows.grid(row=2, column=0, sticky="ew")
-        rows.columnconfigure(0, weight=1)
-        self.binding_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
-        for row, action_id in enumerate(ACTIONS):
-            binding_row = ttk.Frame(rows, style="SurfaceAlt.TFrame", padding=(14, 12))
-            binding_row.grid(row=row, column=0, sticky="ew", pady=(0, 7))
-            binding_row.columnconfigure(0, minsize=230)
-            binding_row.columnconfigure(1, minsize=220)
-            binding_row.columnconfigure(2, minsize=34)
-            binding_row.columnconfigure(3, minsize=220)
-            tk.Label(
-                binding_row,
-                text=ACTION_LABELS[action_id],
-                bg=COLORS["surface_alt"],
-                fg=COLORS["text"],
-                font=TYPE["label"],
-            ).grid(row=0, column=0, sticky="w")
-            current = tk.Label(
-                binding_row,
-                text="—",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["muted"],
-                font=TYPE["body"],
-            )
-            current.grid(row=0, column=1, sticky="w")
-            tk.Label(
-                binding_row,
-                text="→",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["subtle"],
-                font=(FONT_TEXT, 12),
-            ).grid(row=0, column=2)
-            target = tk.Label(
-                binding_row,
-                text="—",
-                bg=COLORS["surface_alt"],
-                fg=COLORS["muted"],
-                font=TYPE["label"],
-            )
-            target.grid(row=0, column=3, sticky="w")
-            self.binding_rows[action_id] = (current, target)
-
-        actions = ttk.Frame(focused, style="Workspace.TFrame")
-        actions.grid(row=3, column=0, sticky="ew", pady=(9, 0))
-        ttk.Checkbutton(
-            actions,
-            textvariable=self.active_ack_label,
-            variable=self.active_ack,
-            command=self._update_apply_state,
-        ).pack(side="left")
-        self.copy_iracing_button = self._button(
-            actions,
-            "Copy iRacing",
-            self.copy_iracing_to_games,
-            ghost=True,
-        )
-        self.copy_iracing_button.pack(side="left", padx=(12, 0))
-        self.apply_all_button = self._button(
-            actions,
-            "Apply all",
-            self.apply_catalog_to_all_games,
-            danger=True,
-        )
-        self.apply_all_button.pack(side="right", padx=(10, 0))
-        self.apply_button = self._button(actions, "Apply selected", self.apply_plan, primary=True)
-        self.apply_button.pack(side="right", padx=(10, 0))
-        self.preview_button = self._button(actions, "Refresh preview", self.preview_bindings, icon="↻")
-        self.preview_button.pack(side="right")
-        self._set_button_state(self.apply_button, "disabled")
-        self._set_button_state(self.apply_all_button, "disabled")
 
     def _build_control_map(self, page: ttk.Frame) -> None:
         self._page_heading(
             page,
             "Control Map",
-            "Compare Sim Config's shared control names with every simulator's native vocabulary.",
+            "Find shared actions and compare their native names across six simulators.",
         )
 
         named_cells = sum(
@@ -1448,6 +918,18 @@ class SimControlsApp(tk.Tk):
         self.control_search_entry.grid(row=0, column=1, sticky="ew")
         self.control_search_entry.bind("<KeyRelease>", self._filter_control_names)
         self.control_search_entry.bind("<Escape>", self._clear_control_search)
+        search_hint = tk.Label(search_box, text="Search controls…  Ctrl+F", font=TYPE["secondary"],
+                               bg=COLORS["raised"], fg=COLORS["subtle"], cursor="xterm")
+        def update_search_hint(_event=None):
+            if not self.control_search.get() and self.focus_get() is not self.control_search_entry:
+                search_hint.place(in_=self.control_search_entry, x=5, rely=0.5, anchor="w")
+            else:
+                search_hint.place_forget()
+        search_hint.bind("<Button-1>", lambda e: self.control_search_entry.focus_set())
+        self.control_search_entry.bind("<FocusIn>", update_search_hint)
+        self.control_search_entry.bind("<FocusOut>", update_search_hint)
+        self.control_search.trace_add("write", lambda *_: update_search_hint())
+        self.after_idle(update_search_hint)
 
         kind_filter = ttk.Combobox(
             toolbar,
@@ -1502,7 +984,7 @@ class SimControlsApp(tk.Tk):
             textvariable=self.control_result_summary,
             bg=COLORS["surface"],
             fg=COLORS["subtle"],
-            font=(FONT_TEXT, 8),
+            font=TYPE["metadata"],
         ).grid(row=0, column=3, sticky="e", padx=(12, 12))
 
         tk.Frame(table_shell, bg=COLORS["line"], height=1).grid(
@@ -1520,7 +1002,7 @@ class SimControlsApp(tk.Tk):
             selectmode="browse",
             style="Pinned.ControlMap.Treeview",
         )
-        self.control_tree.heading("sim_config", text="Sim Config", anchor="w")
+        self.control_tree.heading("sim_config", text="Shared control", anchor="w")
         self.control_tree.column(
             "sim_config",
             width=244,
@@ -1568,11 +1050,15 @@ class SimControlsApp(tk.Tk):
                 anchor="w",
             )
         self.control_mapping_tree.grid(row=0, column=2, sticky="nsew")
+        self.control_empty = tk.Frame(table_grid, bg=COLORS["surface"], padx=24, pady=20)
+        label(self.control_empty, "No matching controls", kind="section").pack(anchor="w")
+        label(self.control_empty, "Try a different name or reset the filters.", tone="muted").pack(anchor="w", pady=(8, 14))
+        self._button(self.control_empty, "Reset filters", self._reset_control_filters).pack(anchor="w")
 
         self.control_tree.tag_configure("even", background=COLORS["surface_alt"])
-        self.control_tree.tag_configure("odd", background="#15171A")
+        self.control_tree.tag_configure("odd", background=COLORS["surface_alt"])
         self.control_mapping_tree.tag_configure("even", background=COLORS["surface"])
-        self.control_mapping_tree.tag_configure("odd", background="#181A1D")
+        self.control_mapping_tree.tag_configure("odd", background=COLORS["surface_alt"])
         for tree in (self.control_tree, self.control_mapping_tree):
             tree.tag_configure("hover", background=COLORS["hover"])
 
@@ -1626,7 +1112,7 @@ class SimControlsApp(tk.Tk):
             textvariable=self.control_detail,
             bg=COLORS["surface_alt"],
             fg=COLORS["muted"],
-            font=(FONT_TEXT, 8),
+            font=TYPE["metadata"],
             justify="left",
             anchor="w",
             wraplength=760,
@@ -1636,7 +1122,7 @@ class SimControlsApp(tk.Tk):
             text="● Mapped   ◇ Review   — Unavailable\nDouble-click for mapping details",
             bg=COLORS["surface_alt"],
             fg=COLORS["subtle"],
-            font=(FONT_TEXT, 8),
+            font=TYPE["metadata"],
             justify="right",
         ).grid(row=1, column=1, sticky="e", padx=12, pady=8)
 
@@ -1718,16 +1204,18 @@ class SimControlsApp(tk.Tk):
         self.deck_edit_button.grid(row=0, column=6, padx=(10, 0))
         self._button(
             toolbar,
-            "Auto-map",
+            "Fill open keys",
             self._assign_deck_shortcuts,
             ghost=True,
         ).grid(row=0, column=7, padx=(4, 0))
-        self._button(
+        self.deck_save_button = self._button(
             toolbar,
             "Save changes",
             self._save_deck_layout,
             primary=True,
-        ).grid(row=0, column=9, sticky="e")
+        )
+        self.deck_save_button.grid(row=0, column=9, sticky="e")
+        Tooltip(self.deck_save_button, "Save the deck layout on this PC · Ctrl+S")
 
         workspace = ttk.Frame(page)
         workspace.pack(fill="both", expand=True, pady=(10, 0))
@@ -1744,18 +1232,26 @@ class SimControlsApp(tk.Tk):
         deck_card.rowconfigure(0, weight=1)
         self.deck_canvas = tk.Canvas(
             deck_card,
-            bg=COLORS["workspace"],
-            highlightthickness=0,
+            bg=COLORS["canvas"],
+            highlightthickness=1,
+            highlightbackground=COLORS["line"],
             bd=0,
             cursor="hand2",
+            takefocus=True,
         )
         self.deck_canvas.grid(row=0, column=0, sticky="nsew")
+        canvas_footer = ttk.Frame(deck_card, style="SurfaceAlt.TFrame", padding=(12, 8))
+        canvas_footer.grid(row=1, column=0, sticky="ew")
+        label(canvas_footer, variable=self.deck_save_status, tone="warning", kind="metadata").pack(side="left")
+        label(canvas_footer, "Arrow keys to select  ·  Enter to inspect", tone="subtle", kind="metadata").pack(side="right")
         self.deck_canvas.bind("<Configure>", self._draw_deck)
         self.deck_canvas.bind("<ButtonPress-1>", self._deck_pointer_down)
         self.deck_canvas.bind("<ButtonRelease-1>", self._deck_pointer_up)
         self.deck_canvas.bind("<Double-Button-1>", self._open_deck_editor)
         self.deck_canvas.bind("<Motion>", self._deck_pointer_motion)
         self.deck_canvas.bind("<Leave>", self._deck_pointer_leave)
+        self.deck_canvas.bind("<Key>", self._deck_keyboard)
+        self.bind("<Control-s>", lambda e: self._save_deck_layout() if self.current_page == "controls" else None)
 
         inspector = ttk.Frame(
             workspace,
@@ -1772,6 +1268,7 @@ class SimControlsApp(tk.Tk):
             style="CardTitle.Surface.TLabel",
         ).grid(row=0, column=0, sticky="w")
         tile_tabs = ttk.Notebook(inspector, style="Deck.TNotebook")
+        self.deck_inspector_tabs = tile_tabs
         tile_tabs.grid(row=1, column=0, sticky="nsew")
         appearance_tab = ttk.Frame(
             tile_tabs, style="Surface.TFrame", padding=(2, 12, 2, 2)
@@ -1802,6 +1299,7 @@ class SimControlsApp(tk.Tk):
         )
         self.deck_action_combo.grid(row=1, column=0, sticky="ew", pady=(5, 0))
         self.deck_action_combo.bind("<<ComboboxSelected>>", self._deck_action_changed)
+        Tooltip(self.deck_action_combo, "Select a shared action for this tile. Changes are kept with Apply tile.")
 
         ttk.Label(appearance_tab, text="Label", style="Muted.Surface.TLabel").grid(
             row=2, column=0, sticky="w", pady=(10, 0)
@@ -1879,6 +1377,7 @@ class SimControlsApp(tk.Tk):
             wraplength=205,
             justify="left",
         ).grid(row=5, column=0, sticky="w", pady=(12, 0))
+        self._button(shortcut_tab, "Apply tile", self._apply_deck_tile, primary=True).grid(row=6, column=0, sticky="ew", pady=(14, 0))
 
         tk.Label(
             inspector,
@@ -1957,6 +1456,7 @@ class SimControlsApp(tk.Tk):
             return
         page.name = name.strip()
         self._refresh_deck_page_controls()
+        self._draw_deck()
         self.deck_status.set("Page renamed. Save the layout to keep the change.")
 
     def _deck_delete_page(self) -> None:
@@ -2032,6 +1532,7 @@ class SimControlsApp(tk.Tk):
             self._draw_deck()
 
     def _deck_pointer_down(self, event: tk.Event) -> None:
+        self.deck_canvas.focus_set()
         index = self._deck_index_at(event.x, event.y)
         if index is None:
             return
@@ -2039,6 +1540,19 @@ class SimControlsApp(tk.Tk):
         self.deck_drag_index = index
         self._load_selected_deck_tile()
         self._draw_deck()
+
+    def _deck_keyboard(self, event: tk.Event) -> str | None:
+        page = self._active_deck_page()
+        movements = {"Left": -1, "Right": 1, "Up": -page.columns, "Down": page.columns}
+        if event.keysym in movements:
+            self.deck_selected_index = max(0, min(len(page.tiles)-1, self.deck_selected_index+movements[event.keysym]))
+            self._load_selected_deck_tile()
+            self._draw_deck()
+            return "break"
+        if event.keysym == "Return":
+            self._open_deck_editor()
+            return "break"
+        return None
 
     def _deck_pointer_up(self, event: tk.Event) -> None:
         target = self._deck_index_at(event.x, event.y)
@@ -2239,6 +1753,8 @@ class SimControlsApp(tk.Tk):
             messagebox.showerror("Could not save tablet layout", str(error), parent=self)
             return
         self.deck_status.set(f"Layout saved to {path}.")
+        self._saved_deck_snapshot = deck_layout.layout_to_dict(self.tablet_layout)
+        self._draw_deck()
         self.footer_status.set("Tablet deck saved")
 
     @staticmethod
@@ -2275,14 +1791,16 @@ class SimControlsApp(tk.Tk):
     def _draw_deck(self, _event: tk.Event | None = None) -> None:
         if not hasattr(self, "deck_canvas"):
             return
+        dirty = deck_layout.layout_to_dict(self.tablet_layout) != self._saved_deck_snapshot
+        self.deck_save_status.set("●  Unsaved changes" if dirty else "✓  All changes saved")
         canvas = self.deck_canvas
         canvas.delete("all")
         page = self._active_deck_page()
-        width = max(canvas.winfo_width(), 560)
-        height = max(canvas.winfo_height(), 340)
-        padding = 24
-        chrome_height = 52
-        gap = 12
+        width = max(canvas.winfo_width(), 300)
+        height = max(canvas.winfo_height(), 250)
+        padding = 18
+        chrome_height = 64
+        gap = 8
         for dot_x in range(18, int(width), 32):
             for dot_y in range(18, int(height), 32):
                 canvas.create_oval(
@@ -2290,7 +1808,7 @@ class SimControlsApp(tk.Tk):
                     dot_y,
                     dot_x + 1,
                     dot_y + 1,
-                    fill="#1D2024",
+                    fill=COLORS["line"],
                     outline="",
                 )
         size = min(
@@ -2303,7 +1821,7 @@ class SimControlsApp(tk.Tk):
             )
             / page.rows,
         )
-        size = max(46, min(size, 108))
+        size = max(26, min(size, 126))
         grid_width = page.columns * size + (page.columns - 1) * gap
         grid_height = page.rows * size + (page.rows - 1) * gap
         start_x = max(padding, (width - grid_width) / 2)
@@ -2334,20 +1852,13 @@ class SimControlsApp(tk.Tk):
             anchor="nw",
             font=TYPE["metadata"],
         )
-        canvas.create_oval(
-            start_x + grid_width - 176,
-            padding + 7,
-            start_x + grid_width - 169,
-            padding + 14,
-            fill=COLORS["accent"],
-            outline="",
-        )
         canvas.create_text(
-            start_x + grid_width - 160,
+            start_x + grid_width,
             padding + 4,
-            text=f"{GAMES[game_id]}  ·  {mapped} mapped",
+            text=f"{GAMES[game_id]}\n{mapped} shortcuts assigned",
             fill=COLORS["muted"],
-            anchor="nw",
+            anchor="ne",
+            justify="right",
             font=TYPE["metadata"],
         )
         canvas.create_line(
@@ -2359,13 +1870,13 @@ class SimControlsApp(tk.Tk):
             width=1,
         )
         accents = {
-            "blue": (COLORS["raised"], "#6DA2F6"),
-            "teal": (COLORS["raised"], "#5ACCB8"),
-            "green": (COLORS["raised"], "#69CE91"),
-            "amber": (COLORS["raised"], "#D9A85C"),
-            "red": (COLORS["raised"], "#DF7780"),
-            "purple": (COLORS["raised"], "#A98BE0"),
-            "slate": (COLORS["raised"], "#AEB5BF"),
+            "blue": (COLORS["surface"], "#6DA2F6"),
+            "teal": (COLORS["surface"], "#5ACCB8"),
+            "green": (COLORS["surface"], "#69CE91"),
+            "amber": (COLORS["surface"], "#D9A85C"),
+            "red": (COLORS["surface"], "#DF7780"),
+            "purple": (COLORS["surface"], "#A98BE0"),
+            "slate": (COLORS["surface"], "#AEB5BF"),
         }
         self._deck_tile_bounds = {}
         for index, tile in enumerate(page.tiles):
@@ -2379,7 +1890,7 @@ class SimControlsApp(tk.Tk):
                 fill, accent = COLORS["surface_alt"], COLORS["subtle"]
             selected = index == self.deck_selected_index
             hovered = index == self.deck_hover_index
-            radius = max(8, size * 0.13)
+            radius = 5
             if selected:
                 fill = COLORS["selection"]
             elif hovered:
@@ -2428,7 +1939,7 @@ class SimControlsApp(tk.Tk):
                 justify="center",
                 font=(
                     FONT_TEXT,
-                    max(6, min(9, int(size * 0.095))),
+                    -max(9, min(13, int(size * 0.125))),
                     "bold",
                 ),
             )
@@ -2541,6 +2052,10 @@ class SimControlsApp(tk.Tk):
         self._populate_control_names()
         self.control_search_entry.focus_set()
         return "break"
+
+    def _reset_control_filters(self) -> None:
+        self.control_kind_filter.set("All controls")
+        self._clear_control_search()
 
     def _focus_control_search(self, _event: tk.Event | None = None) -> str:
         self.show_page("control_map")
@@ -2719,6 +2234,10 @@ class SimControlsApp(tk.Tk):
         self.control_result_summary.set(
             f"{len(control_ids):,} of {len(CONTROLS):,} controls"
         )
+        if control_ids:
+            self.control_empty.place_forget()
+        else:
+            self.control_empty.place(relx=0.5, rely=0.35, anchor="center")
         if selected_id in control_ids:
             for tree in (self.control_tree, self.control_mapping_tree):
                 tree.selection_set(selected_id)
@@ -2768,68 +2287,6 @@ class SimControlsApp(tk.Tk):
             details.append("All six native names are verified exact mappings.")
         self.control_detail.set("\n".join(details))
 
-    def _build_recovery(self, page: ttk.Frame) -> None:
-        self._page_heading(
-            page,
-            "Recovery",
-            "Every applied change creates a hash-verified backup and a restore receipt.",
-        )
-        focused = ttk.Frame(page, style="Workspace.TFrame", width=780)
-        focused.pack(anchor="n")
-        focused.columnconfigure(0, weight=1)
-
-        card = ttk.Frame(focused, style="SurfaceAlt.TFrame", padding=16)
-        card.grid(row=0, column=0, sticky="ew")
-        card.columnconfigure(0, weight=1)
-        tk.Label(
-            card,
-            text="Restore receipt",
-            bg=COLORS["surface_alt"],
-            fg=COLORS["text"],
-            font=TYPE["section"],
-        ).grid(
-            row=0, column=0, columnspan=2, sticky="w"
-        )
-        tk.Label(
-            card,
-            text="Select a receipt to inspect it before restoring the original controls file.",
-            bg=COLORS["surface_alt"],
-            fg=COLORS["muted"],
-            font=TYPE["secondary"],
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 14))
-        ttk.Entry(card, textvariable=self.receipt_path).grid(row=2, column=0, sticky="ew")
-        self._button(card, "Choose receipt", self._browse_receipt, ghost=True).grid(row=2, column=1, padx=(10, 0))
-        self.restore_info = tk.Label(
-            card,
-            text="No receipt selected",
-            bg=COLORS["surface_alt"],
-            fg=COLORS["muted"],
-            font=TYPE["body"],
-            justify="left",
-            anchor="w",
-            wraplength=720,
-        )
-        self.restore_info.grid(row=3, column=0, columnspan=2, sticky="ew", pady=18)
-        self.restore_button = self._button(card, "Restore original", self.restore_backup, danger=True)
-        self.restore_button.grid(row=4, column=0, columnspan=2, sticky="e")
-        self._set_button_state(self.restore_button, "disabled")
-
-        safety = ttk.Frame(focused, style="Workspace.TFrame")
-        safety.grid(row=1, column=0, sticky="ew", pady=(20, 0))
-        ttk.Label(safety, text="Built-in protection", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(
-            safety,
-            text=(
-                "✓  Simulator must be closed\n"
-                "✓  Source hash must match the preview\n"
-                "✓  Backup is verified before writing\n"
-                "✓  Failed writes roll back automatically"
-            ),
-            foreground=COLORS["muted"],
-            font=TYPE["secondary"],
-            wraplength=760,
-            justify="left",
-        ).pack(anchor="w", pady=(10, 0))
 
     def _button(
         self,
@@ -2882,9 +2339,9 @@ class SimControlsApp(tk.Tk):
         parent_background = getattr(button, "_scm_parent_background", COLORS["workspace"])
         palettes = {
             "primary": (COLORS["primary"], COLORS["primary_hover"], COLORS["primary_pressed"], COLORS["text"]),
-            "secondary": (COLORS["raised"], COLORS["hover"], "#181A1E", COLORS["text"]),
+            "secondary": (COLORS["raised"], COLORS["hover"], COLORS["surface_alt"], COLORS["text"]),
             "ghost": (parent_background, COLORS["hover"], COLORS["raised"], COLORS["muted"]),
-            "danger": (COLORS["danger_soft"], "#382026", "#241418", "#FF9AA4"),
+            "danger": (COLORS["danger_soft"], "#61414B", "#432D35", COLORS["danger"]),
         }
         button._scm_variant = variant
         button._scm_palette = palettes[variant]
@@ -2894,7 +2351,7 @@ class SimControlsApp(tk.Tk):
             fg=foreground,
             activebackground=active,
             activeforeground=COLORS["text"],
-            highlightbackground=default,
+            highlightbackground=COLORS["border"] if variant == "secondary" else default,
             highlightcolor=COLORS["primary_hover"],
         )
 
@@ -2913,11 +2370,12 @@ class SimControlsApp(tk.Tk):
     def _paint_button(button: tk.Button, state: str) -> None:
         if str(button.cget("state")) == "disabled":
             return
-        default, hover, active, _foreground = button._scm_palette
+        default, hover, active, foreground = button._scm_palette
         background = {"default": default, "hover": hover, "active": active}[state]
         button.configure(
             bg=background,
-            highlightbackground=(COLORS["primary_hover"] if button.focus_get() is button else background),
+            fg=foreground,
+            highlightbackground=(COLORS["primary_hover"] if button.focus_get() is button else (COLORS["border"] if button._scm_variant == "secondary" else background)),
         )
 
     def show_page(self, name: str) -> None:
@@ -2934,7 +2392,7 @@ class SimControlsApp(tk.Tk):
             self.footer_context.set(page_titles.get(name, name))
         for page, button in self.nav_buttons.items():
             selected = page == name
-            background = "#181A1E" if selected else COLORS["sidebar"]
+            background = COLORS["selection_key"] if selected else COLORS["sidebar"]
             button.configure(
                 bg=background,
                 fg=COLORS["text"] if selected else COLORS["muted"],
@@ -2949,6 +2407,11 @@ class SimControlsApp(tk.Tk):
                 bg=COLORS["primary"] if selected else background
             )
 
+        if hasattr(self, "binding_states"):
+            self._refresh_workspace_status()
+        if name == "recovery" and hasattr(self, "history_tree"):
+            self._refresh_receipts()
+
     def _set_busy(self, busy: bool, message: str) -> None:
         self.busy = busy
         self.footer_status.set(message)
@@ -2958,6 +2421,13 @@ class SimControlsApp(tk.Tk):
         self._set_button_state(self.preview_button, state)
         self._set_button_state(self.copy_iracing_button, state)
         self._set_button_state(self.apply_all_button, state)
+        for combo in (self.game_combo, self.profile_combo, self.device_combo):
+            combo.configure(state="disabled" if busy else "readonly")
+        self.active_ack_check.configure(state="disabled" if busy else "normal")
+        self._set_button_state(self.apply_button, "disabled")
+        self._set_button_state(self.restore_button, "disabled" if busy else (
+            "normal" if getattr(self, "_receipt_ready_path", None) == self.receipt_path.get() else "disabled"
+        ))
         if not busy:
             self._update_apply_state()
 
@@ -3077,6 +2547,8 @@ class SimControlsApp(tk.Tk):
                 self.after(0, self._poll_sources)
         else:
             self.last_refreshed.set("Live sync paused • use Refresh to update")
+
+        self._refresh_workspace_status()
 
     def _close(self) -> None:
         self._closing = True
@@ -3468,7 +2940,7 @@ class SimControlsApp(tk.Tk):
             for binding in self.simhub_inspection.bindings
         } if self.simhub_inspection else {}
         for action_id, (current, target) in self.binding_rows.items():
-            current.configure(text="—", fg=COLORS["muted"])
+            current.configure(text="Awaiting preview", fg=COLORS["muted"])
             button = targets.get(action_id)
             target.configure(
                 text=f"Button {button}" if button else "Not mapped",
@@ -3557,7 +3029,7 @@ class SimControlsApp(tk.Tk):
             if action is not None and action.status == "unsupported":
                 target.configure(text="Not exposed", fg=COLORS["warning"])
             if action_id in changed:
-                target.configure(fg=COLORS["primary"])
+                target.configure(fg=COLORS["primary_hover"])
         count = len(self.binding_plan.changes)
         if count:
             self.footer_status.set(f"Preview ready • {count} change{'s' if count != 1 else ''}")
@@ -3583,6 +3055,9 @@ class SimControlsApp(tk.Tk):
         self.binding_plan_game = None
         if hasattr(self, "apply_button"):
             self._set_button_state(self.apply_button, "disabled")
+
+        if hasattr(self, "binding_states"):
+            self._refresh_workspace_status()
 
     def _update_apply_state(self) -> None:
         if not hasattr(self, "apply_button"):
@@ -3611,6 +3086,8 @@ class SimControlsApp(tk.Tk):
             self.apply_all_button,
             "normal" if global_enabled else "disabled",
         )
+
+        self._refresh_workspace_status()
 
     def apply_plan(self) -> None:
         plan = self.binding_plan
@@ -3995,6 +3472,7 @@ class SimControlsApp(tk.Tk):
         success_status: str,
         partial_status: str,
     ) -> None:
+        self._invalidate_preview()
         receipts = [
             apply_result.receipt_path
             for _target, apply_result in successes
@@ -4004,6 +3482,7 @@ class SimControlsApp(tk.Tk):
             self.last_receipt = receipts[-1]
             self.receipt_path.set(str(receipts[-1]))
             self._inspect_receipt()
+            self._refresh_receipts()
 
         lines = []
         for target, _apply_result in successes:
@@ -4045,6 +3524,7 @@ class SimControlsApp(tk.Tk):
         if result.receipt_path:
             self.receipt_path.set(str(result.receipt_path))
             self._inspect_receipt()
+            self._refresh_receipts()
         self._invalidate_preview()
         self.footer_status.set("Bindings applied and backup verified")
         messagebox.showinfo(
@@ -4136,29 +3616,8 @@ class SimControlsApp(tk.Tk):
         if path:
             self.receipt_path.set(path)
             self._inspect_receipt()
+            self._refresh_receipts()
 
-    def _inspect_receipt(self) -> None:
-        try:
-            preview = preview_restore(self.receipt_path.get())
-        except Exception as error:
-            self.restore_info.configure(text=str(error), fg=COLORS["danger"])
-            self._set_button_state(self.restore_button, "disabled")
-            return
-        status_labels = {
-            "ready": "Ready to restore",
-            "already-restored": "Already restored",
-            "changed-since-apply": "Target changed since apply",
-            "target-missing": "Target file is missing",
-        }
-        label = status_labels.get(preview.status, preview.status)
-        self.restore_info.configure(
-            text=f"{label}\nOriginal file: {preview.receipt.originalPath}\nBackup created: {preview.receipt.createdAt}",
-            fg=COLORS["accent"] if preview.status == "ready" else COLORS["warning"],
-        )
-        self._set_button_state(
-            self.restore_button,
-            "normal" if preview.status == "ready" else "disabled",
-        )
 
     def restore_backup(self) -> None:
         receipt = self.receipt_path.get()
@@ -4216,6 +3675,9 @@ class SimControlsApp(tk.Tk):
 
     def _restore_complete(self, _result, game_name: str) -> None:
         self._inspect_receipt()
+        self._refresh_receipts()
+        self._invalidate_preview()
+        self._refresh_binding_rows()
         self.footer_status.set("Original controls restored")
         messagebox.showinfo(
             "Restore complete",
