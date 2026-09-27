@@ -241,7 +241,12 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     )
 
 
-def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
+def plan_bindings(
+    profile: ProfileCandidate,
+    catalog: Catalog,
+    *,
+    source_bytes: bytes | None = None,
+) -> BindingPlan:
     """Prepare an in-memory three-action patch without writing the profile."""
     device = catalog.virtual_device
     if device.instance_guid is None or device.product_guid is None:
@@ -251,9 +256,13 @@ def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
         )
     instance_bytes = guid_from_string(device.instance_guid)
     product_bytes = guid_from_string(device.product_guid)
-    source_bytes = profile.controls_path.read_bytes()
-    document = parse_gfcc(source_bytes)
-    if build_gfcc(document) != source_bytes:
+    source = (
+        profile.controls_path.read_bytes()
+        if source_bytes is None
+        else bytes(source_bytes)
+    )
+    document = parse_gfcc(source)
+    if build_gfcc(document) != source:
         raise IRacingFormatError("source controls.cfg did not round-trip byte-exactly")
 
     entries = document["controls"]["entries"]
@@ -317,7 +326,7 @@ def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
 
     return BindingPlan(
         profile=profile,
-        source_hash=sha256(source_bytes),
+        source_hash=sha256(source),
         next_bytes=next_bytes,
         changes=tuple(changes),
     )

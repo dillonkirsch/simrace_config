@@ -230,6 +230,69 @@ class IRacingTransferTests(unittest.TestCase):
                 preview.skipped_games,
             )
 
+    def test_app_catalog_previews_all_games_independently(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sim-controls-sync-") as temporary:
+            root = Path(temporary)
+            iracing_path = root / "controls.cfg"
+            acc_path = root / "controls.json"
+            iracing_path.write_bytes(b"iracing source")
+            acc_path.write_bytes(b"acc source")
+            profiles = {
+                "iracing": SimpleNamespace(
+                    name="Road", controls_path=iracing_path
+                ),
+                "acc": SimpleNamespace(name="Live", controls_path=acc_path),
+            }
+            catalog = validate_catalog(
+                {
+                    "schemaVersion": 1,
+                    "virtualDevice": {
+                        "provider": "simhub-control-mapper",
+                        "identity": "SimHub Virtual Controller",
+                        "instanceGuid": "11111111-1111-1111-1111-111111111111",
+                        "productGuid": "22222222-2222-2222-2222-222222222222",
+                    },
+                    "bindings": [
+                        {"actionId": "pit_limiter", "virtualButton": 7},
+                        {"actionId": "tc_increase", "virtualButton": 8},
+                    ],
+                }
+            )
+            iracing_plan = SimpleNamespace(
+                next_bytes=b"iracing next", changes=("pit",)
+            )
+
+            with (
+                mock.patch.object(
+                    transfer.iracing,
+                    "plan_bindings",
+                    return_value=iracing_plan,
+                ) as iracing_planner,
+                mock.patch.object(
+                    transfer.acc,
+                    "plan_bindings",
+                    side_effect=ValueError("button conflict"),
+                ),
+            ):
+                preview = transfer.build_catalog_sync_preview(
+                    catalog,
+                    profiles,
+                    (("Automobilista 2", "read-only"),),
+                )
+
+            self.assertEqual(iracing_path.read_bytes(), b"iracing source")
+            self.assertEqual(acc_path.read_bytes(), b"acc source")
+            self.assertEqual([target.game_id for target in preview.targets], ["iracing"])
+            self.assertEqual(preview.targets[0].next_bytes, b"iracing next")
+            self.assertEqual(
+                iracing_planner.call_args.kwargs["source_bytes"],
+                b"iracing source",
+            )
+            self.assertIn(("ACC", "button conflict"), preview.skipped_games)
+            self.assertIn(
+                ("Automobilista 2", "read-only"), preview.skipped_games
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

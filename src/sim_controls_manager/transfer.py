@@ -18,10 +18,19 @@ from sim_controls_manager.file_change import sha256
 
 
 GAME_LABELS = {
+    "iracing": "iRacing",
     "assetto_corsa": "Assetto Corsa",
     "acc": "ACC",
     "assetto_corsa_evo": "Assetto Corsa EVO",
     "lmu": "Le Mans Ultimate",
+}
+
+SYNC_ACTION_MAPS = {
+    "iracing": iracing.ACTION_MAP,
+    "assetto_corsa": assetto_corsa.ACTION_MAP,
+    "acc": acc.ACTION_MAP,
+    "assetto_corsa_evo": assetto_corsa_evo.ACTION_MAP,
+    "lmu": le_mans_ultimate.ACTION_MAP,
 }
 
 ACTION_MAPS = {
@@ -64,6 +73,13 @@ class TransferPreview:
     source_profile: iracing.ProfileCandidate
     source_actions: tuple[str, ...]
     skipped_source_actions: tuple[str, ...]
+    targets: tuple[TargetPlan, ...]
+    skipped_games: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSyncPreview:
+    source_actions: tuple[str, ...]
     targets: tuple[TargetPlan, ...]
     skipped_games: tuple[tuple[str, str], ...]
 
@@ -172,8 +188,9 @@ def _target_catalog(
     catalog: Catalog,
     game_id: str,
     available_actions: set[str] | None,
+    action_maps: dict[str, dict[str, Any]] = ACTION_MAPS,
 ) -> Catalog | None:
-    action_map = ACTION_MAPS[game_id]
+    action_map = action_maps[game_id]
     bindings = tuple(
         binding
         for binding in catalog.bindings
@@ -183,6 +200,89 @@ def _target_catalog(
     if not bindings:
         return None
     return Catalog(catalog.schema_version, catalog.virtual_device, bindings)
+
+
+def build_catalog_sync_preview(
+    catalog: Catalog,
+    target_profiles: dict[str, Any],
+    skipped_games: tuple[tuple[str, str], ...] = (),
+) -> CatalogSyncPreview:
+    """Preview the app's central catalog against every writable simulator."""
+
+    planners: dict[str, Callable[..., Any]] = {
+        "iracing": iracing.plan_bindings,
+        "assetto_corsa": assetto_corsa.plan_bindings,
+        "acc": acc.plan_bindings,
+        "assetto_corsa_evo": assetto_corsa_evo.plan_bindings,
+        "lmu": le_mans_ultimate.plan_bindings,
+    }
+    source_actions = tuple(binding.action_id for binding in catalog.bindings)
+    targets: list[TargetPlan] = []
+    skipped = list(skipped_games)
+    for game_id, profile in target_profiles.items():
+        game_name = GAME_LABELS[game_id]
+        try:
+            original = profile.controls_path.read_bytes()
+            available_actions = None
+            if game_id == "assetto_corsa":
+                document = assetto_corsa.parse_controls(original)
+                available_actions = {
+                    action_id
+                    for action_id, native_name in assetto_corsa.ACTION_MAP.items()
+                    if native_name in document.sections
+                }
+            target_catalog = _target_catalog(
+                catalog,
+                game_id,
+                available_actions,
+                SYNC_ACTION_MAPS,
+            )
+            supported_ids = (
+                {binding.action_id for binding in target_catalog.bindings}
+                if target_catalog is not None
+                else set()
+            )
+            unsupported = tuple(
+                action_id
+                for action_id in source_actions
+                if action_id not in supported_ids
+            )
+            if target_catalog is None:
+                targets.append(
+                    TargetPlan(
+                        game_id,
+                        game_name,
+                        profile,
+                        sha256(original),
+                        original,
+                        (),
+                        unsupported,
+                    )
+                )
+                continue
+            plan = planners[game_id](
+                profile,
+                target_catalog,
+                source_bytes=original,
+            )
+            targets.append(
+                TargetPlan(
+                    game_id,
+                    game_name,
+                    profile,
+                    sha256(original),
+                    plan.next_bytes,
+                    tuple(plan.changes),
+                    tuple(
+                        dict.fromkeys(
+                            (*unsupported, *getattr(plan, "unsupported_actions", ()))
+                        )
+                    ),
+                )
+            )
+        except Exception as error:
+            skipped.append((game_name, str(error)))
+    return CatalogSyncPreview(source_actions, tuple(targets), tuple(skipped))
 
 
 def build_preview(

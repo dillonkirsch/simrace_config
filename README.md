@@ -49,6 +49,13 @@ keyboard or axis bindings, unsupported game actions, conflicts, and AMS2's
 read-only encrypted profile are left unchanged. The confirmation shows a
 per-game preview, and every changed file receives its own verified backup.
 
+Use **Apply to all games** after changing the app's central SimHub bindings.
+The app previews the change for every detected simulator, asks once, then
+updates each compatible profile independently. Unsupported controls and games
+with conflicts are left unchanged; every successful game write has its own
+backup and recovery receipt. **Apply selected** remains available for a
+single-game correction.
+
 The **Tablet deck** screen is a touch-first, multi-page deck designer. It ships
 with editable Race, Pit, Replay, Camera, and Chat pages in an 8×4 layout. Tiles
 use high-contrast line icons, can be swapped by dragging, and expose editable

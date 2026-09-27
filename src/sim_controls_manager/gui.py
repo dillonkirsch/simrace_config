@@ -975,14 +975,21 @@ class SimControlsApp(tk.Tk):
             actions,
             "Copy iRacing → other games",
             self.copy_iracing_to_games,
-            primary=True,
         )
         self.copy_iracing_button.pack(side="left")
-        self.apply_button = self._button(actions, "Apply safely", self.apply_plan, danger=True)
+        self.apply_all_button = self._button(
+            actions,
+            "Apply to all games",
+            self.apply_catalog_to_all_games,
+            danger=True,
+        )
+        self.apply_all_button.pack(side="right", padx=(10, 0))
+        self.apply_button = self._button(actions, "Apply selected", self.apply_plan)
         self.apply_button.pack(side="right", padx=(10, 0))
         self.preview_button = self._button(actions, "Refresh preview", self.preview_bindings, primary=True)
         self.preview_button.pack(side="right")
         self.apply_button.configure(state="disabled")
+        self.apply_all_button.configure(state="disabled")
 
     def _build_control_names(self, page: ttk.Frame) -> None:
         self._page_heading(
@@ -1976,6 +1983,7 @@ class SimControlsApp(tk.Tk):
         self.scan_button.configure(state=state)
         self.preview_button.configure(state=state)
         self.copy_iracing_button.configure(state=state)
+        self.apply_all_button.configure(state=state)
         if not busy:
             self._update_apply_state()
 
@@ -2364,6 +2372,7 @@ class SimControlsApp(tk.Tk):
         self.last_refreshed.set(f"Updated {now}  •  {live_text}  •  read-only monitoring")
         self.footer_status.set("Configuration refreshed automatically" if automatic else "Setup scan complete")
         self._refresh_binding_rows()
+        self._update_apply_state()
         if ready:
             self.after(25, lambda: self.preview_bindings(quiet=True))
 
@@ -2607,6 +2616,25 @@ class SimControlsApp(tk.Tk):
         if enabled and self.binding_plan.profile.active and not self.active_ack.get():
             enabled = False
         self.apply_button.configure(state="normal" if enabled else "disabled")
+        global_enabled = bool(
+            not self.busy
+            and self.simhub_inspection
+            and self.simhub_inspection.bindings
+            and self.devices
+            and any(
+                discovery and discovery.profiles
+                for discovery in (
+                    self.discovery,
+                    self.assetto_corsa_discovery,
+                    self.acc_discovery,
+                    self.assetto_corsa_evo_discovery,
+                    self.lmu_discovery,
+                )
+            )
+        )
+        self.apply_all_button.configure(
+            state="normal" if global_enabled else "disabled"
+        )
 
     def apply_plan(self) -> None:
         plan = self.binding_plan
@@ -2692,6 +2720,97 @@ class SimControlsApp(tk.Tk):
         return next(
             (profile for profile in discovery.profiles if profile.active),
             discovery.profiles[0],
+        )
+
+    def apply_catalog_to_all_games(self) -> None:
+        try:
+            catalog = self._catalog()
+        except Exception as error:
+            messagebox.showerror(
+                "Cannot apply to all games",
+                str(error),
+                parent=self,
+            )
+            return
+
+        target_discoveries = {
+            "iracing": self.discovery,
+            "assetto_corsa": self.assetto_corsa_discovery,
+            "acc": self.acc_discovery,
+            "assetto_corsa_evo": self.assetto_corsa_evo_discovery,
+            "lmu": self.lmu_discovery,
+        }
+        target_profiles = {}
+        skipped_games = []
+        for game_id, discovery in target_discoveries.items():
+            profile = self._preferred_profile(discovery, game_id)
+            if profile is None:
+                skipped_games.append((transfer.GAME_LABELS[game_id], "not detected"))
+            else:
+                target_profiles[game_id] = profile
+        if self.automobilista_2_discovery:
+            skipped_games.append(
+                (
+                    "Automobilista 2",
+                    "encrypted controller format is read-only",
+                )
+            )
+
+        self._run_task(
+            "Comparing app bindings with every game…",
+            lambda: transfer.build_catalog_sync_preview(
+                catalog,
+                target_profiles,
+                tuple(skipped_games),
+            ),
+            self._confirm_catalog_sync,
+        )
+
+    def _confirm_catalog_sync(self, preview: transfer.CatalogSyncPreview) -> None:
+        changed_targets = tuple(
+            target for target in preview.targets if target.changes
+        )
+        lines = ["Source: app bindings", ""]
+        for target in preview.targets:
+            count = len(target.changes)
+            detail = f"{count} change{'s' if count != 1 else ''}"
+            if target.unsupported_actions:
+                detail += (
+                    f"; {len(target.unsupported_actions)} unsupported left unchanged"
+                )
+            lines.append(f"• {target.game_name} / {target.profile.name}: {detail}")
+        for game_name, reason in preview.skipped_games:
+            lines.append(f"• {game_name}: skipped — {reason}")
+
+        if not changed_targets:
+            messagebox.showinfo(
+                "All games already match",
+                "\n".join(lines),
+                parent=self,
+            )
+            self.footer_status.set("All compatible games already match the app")
+            return
+
+        lines.extend(
+            (
+                "",
+                "Only supported equivalent controls are included. All other settings stay unchanged.",
+                "A separate verified backup is created for every changed game. Close those games before continuing.",
+            )
+        )
+        if not messagebox.askyesno(
+            "Apply app bindings to all games?",
+            "\n".join(lines),
+            icon="warning",
+            parent=self,
+        ):
+            self.footer_status.set("All-game apply cancelled")
+            return
+
+        self._run_task(
+            "Backing up and updating all compatible games…",
+            lambda: self._apply_target_plans(changed_targets),
+            lambda result: self._catalog_sync_complete(result, preview),
         )
 
     def copy_iracing_to_games(self) -> None:
@@ -2800,11 +2919,11 @@ class SimControlsApp(tk.Tk):
 
         self._run_task(
             "Backing up and applying iRacing buttons to other games…",
-            lambda: self._apply_iracing_transfer(changed_targets),
+            lambda: self._apply_target_plans(changed_targets),
             lambda result: self._iracing_transfer_complete(result, preview),
         )
 
-    def _apply_iracing_transfer(self, targets: tuple[transfer.TargetPlan, ...]):
+    def _apply_target_plans(self, targets: tuple[transfer.TargetPlan, ...]):
         successes = []
         failures = []
         for target in targets:
@@ -2817,7 +2936,14 @@ class SimControlsApp(tk.Tk):
                         "SOURCE_CHANGED",
                         "The profile changed after preview. Run the copy again.",
                     )
-                if target.game_id == "assetto_corsa":
+                if target.game_id == "iracing":
+                    result = apply_file_change(
+                        file_plan,
+                        _backup_directory(target.profile.name),
+                        validate=_validate_iracing_bytes,
+                        is_target_in_use=iracing.is_iracing_running,
+                    )
+                elif target.game_id == "assetto_corsa":
                     result = apply_file_change(
                         file_plan,
                         _assetto_corsa_backup_directory(target.profile.name),
@@ -2850,12 +2976,49 @@ class SimControlsApp(tk.Tk):
                 failures.append((target, error))
         return tuple(successes), tuple(failures)
 
+    def _catalog_sync_complete(
+        self,
+        result,
+        preview: transfer.CatalogSyncPreview,
+    ) -> None:
+        successes, failures = result
+        self._finish_multi_game_apply(
+            successes,
+            failures,
+            preview.skipped_games,
+            success_title="All games updated",
+            partial_title="Some games were not updated",
+            success_status="App bindings applied to all compatible games",
+            partial_status="All-game apply completed with skipped or failed games",
+        )
+
     def _iracing_transfer_complete(
         self,
         result,
         preview: transfer.TransferPreview,
     ) -> None:
         successes, failures = result
+        self._finish_multi_game_apply(
+            successes,
+            failures,
+            preview.skipped_games,
+            success_title="iRacing buttons copied",
+            partial_title="iRacing copy partially completed",
+            success_status="iRacing buttons copied to compatible games",
+            partial_status="iRacing copy completed with skipped or failed games",
+        )
+
+    def _finish_multi_game_apply(
+        self,
+        successes,
+        failures,
+        skipped_games,
+        *,
+        success_title: str,
+        partial_title: str,
+        success_status: str,
+        partial_status: str,
+    ) -> None:
         receipts = [
             apply_result.receipt_path
             for _target, apply_result in successes
@@ -2874,20 +3037,28 @@ class SimControlsApp(tk.Tk):
             )
         for target, error in failures:
             lines.append(f"✗ {target.game_name} / {target.profile.name}: {error}")
-        for game_name, reason in preview.skipped_games:
+        for game_name, reason in skipped_games:
             lines.append(f"— {game_name}: skipped — {reason}")
 
-        if failures:
-            self.footer_status.set("iRacing copy completed with skipped or failed games")
+        actionable_skips = tuple(
+            (game_name, reason)
+            for game_name, reason in skipped_games
+            if reason not in (
+                "not detected",
+                "encrypted controller format is read-only",
+            )
+        )
+        if failures or actionable_skips:
+            self.footer_status.set(partial_status)
             messagebox.showwarning(
-                "iRacing copy partially completed",
+                partial_title,
                 "\n".join(lines),
                 parent=self,
             )
         else:
-            self.footer_status.set("iRacing buttons copied to compatible games")
+            self.footer_status.set(success_status)
             messagebox.showinfo(
-                "iRacing buttons copied",
+                success_title,
                 "\n".join(lines),
                 parent=self,
             )
