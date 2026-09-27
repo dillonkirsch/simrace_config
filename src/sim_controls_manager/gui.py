@@ -84,6 +84,12 @@ def _native_control_text(mapping: NativeControlName) -> str:
     return name
 
 
+def _matrix_control_text(mapping: NativeControlName) -> str:
+    """Return a compact native name for the matrix, or blank when none exists."""
+
+    return " / ".join(mapping.names)
+
+
 def _matching_control_ids(query: str) -> tuple[str, ...]:
     """Return controls whose central or native names contain ``query``."""
 
@@ -366,6 +372,7 @@ class SimControlsApp(tk.Tk):
         self.current_binding_heading = tk.StringVar(value="CURRENT iRACING")
         self.active_ack_label = tk.StringVar(value="I understand this is the active profile")
         self.control_search = tk.StringVar()
+        self.control_kind_filter = tk.StringVar(value="All controls")
         self.control_result_summary = tk.StringVar()
         self.control_detail = tk.StringVar(value="Select a control to see mapping notes.")
 
@@ -549,6 +556,35 @@ class SimControlsApp(tk.Tk):
             foreground=[("active", COLORS["text"])],
         )
         style.configure(
+            "ControlMap.Treeview",
+            background=COLORS["surface"],
+            fieldbackground=COLORS["surface"],
+            foreground=COLORS["text"],
+            borderwidth=0,
+            rowheight=38,
+            font=(FONT_TEXT, 9),
+        )
+        style.configure(
+            "ControlMap.Treeview.Heading",
+            background=COLORS["raised"],
+            foreground=COLORS["muted"],
+            bordercolor=COLORS["border"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border"],
+            font=(FONT_TEXT, 8, "bold"),
+            padding=(10, 11),
+        )
+        style.map(
+            "ControlMap.Treeview",
+            background=[("selected", COLORS["primary"])],
+            foreground=[("selected", COLORS["text"])],
+        )
+        style.map(
+            "ControlMap.Treeview.Heading",
+            background=[("active", "#1D2736")],
+            foreground=[("active", COLORS["text"])],
+        )
+        style.configure(
             "Deck.TNotebook",
             background=COLORS["surface"],
             borderwidth=0,
@@ -623,6 +659,7 @@ class SimControlsApp(tk.Tk):
             (
                 ("dashboard", "⌂   Overview"),
                 ("controls", "▦   Deck Studio"),
+                ("control_map", "≡   Control Map"),
                 ("bindings", "⇄   Bindings"),
                 ("recovery", "↺   Recovery"),
             ),
@@ -649,7 +686,7 @@ class SimControlsApp(tk.Tk):
 
         version = updater.current_version()
         sidebar_footer = tk.Frame(sidebar, bg=COLORS["sidebar"])
-        sidebar_footer.grid(row=6, column=0, sticky="sew", padx=20, pady=20)
+        sidebar_footer.grid(row=7, column=0, sticky="sew", padx=20, pady=20)
         tk.Label(
             sidebar_footer,
             text="●  SYSTEM ONLINE",
@@ -664,7 +701,7 @@ class SimControlsApp(tk.Tk):
             fg=COLORS["subtle"],
             font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(7, 0))
-        sidebar.rowconfigure(5, weight=1)
+        sidebar.rowconfigure(6, weight=1)
 
         content = ttk.Frame(self)
         content.grid(row=0, column=1, sticky="nsew")
@@ -673,13 +710,14 @@ class SimControlsApp(tk.Tk):
         content.rowconfigure(1, minsize=42)
 
         self.pages = {}
-        for name in ("dashboard", "controls", "bindings", "recovery"):
+        for name in ("dashboard", "controls", "control_map", "bindings", "recovery"):
             page = ttk.Frame(content, padding=(36, 28, 36, 14))
             page.grid(row=0, column=0, sticky="nsew")
             self.pages[name] = page
 
         self._build_dashboard(self.pages["dashboard"])
         self._build_control_names(self.pages["controls"])
+        self._build_control_map(self.pages["control_map"])
         self._build_bindings(self.pages["bindings"])
         self._build_recovery(self.pages["recovery"])
 
@@ -990,6 +1028,177 @@ class SimControlsApp(tk.Tk):
         self.preview_button.pack(side="right")
         self.apply_button.configure(state="disabled")
         self.apply_all_button.configure(state="disabled")
+
+    def _build_control_map(self, page: ttk.Frame) -> None:
+        self._page_heading(
+            page,
+            "Control map",
+            "Compare Sim Config's shared control names with every simulator's native vocabulary.",
+        )
+
+        named_cells = sum(
+            bool(NATIVE_CONTROL_NAMES[game_id][control_id].names)
+            for game_id in GAMES
+            for control_id in CONTROLS
+        )
+        total_cells = len(CONTROLS) * len(GAMES)
+        summary = ttk.Frame(page)
+        summary.pack(fill="x", pady=(0, 12))
+        for column in range(3):
+            summary.columnconfigure(column, weight=1, uniform="control-map-summary")
+        for column, (value, label, accent) in enumerate(
+            (
+                (f"{len(CONTROLS):,}", "SIM CONFIG CONTROLS", COLORS["primary_hover"]),
+                (f"{named_cells:,}", "NAMED GAME CELLS", COLORS["accent"]),
+                (f"{total_cells - named_cells:,}", "BLANK CELLS", COLORS["muted"]),
+            )
+        ):
+            card = ttk.Frame(
+                summary,
+                style="Surface.TFrame",
+                padding=(16, 13),
+                borderwidth=1,
+                relief="solid",
+            )
+            card.grid(
+                row=0,
+                column=column,
+                sticky="nsew",
+                padx=(0 if column == 0 else 5, 0 if column == 2 else 5),
+            )
+            tk.Label(
+                card,
+                text=value,
+                bg=COLORS["surface"],
+                fg=accent,
+                font=(FONT_DISPLAY, 18, "bold"),
+            ).pack(anchor="w")
+            tk.Label(
+                card,
+                text=label,
+                bg=COLORS["surface"],
+                fg=COLORS["subtle"],
+                font=(FONT_TEXT, 8, "bold"),
+            ).pack(anchor="w", pady=(3, 0))
+
+        toolbar = self._card(page, fill="x", pady=(0, 12))
+        toolbar.columnconfigure(0, weight=1)
+        ttk.Label(toolbar, text="SEARCH CONTROLS", style="Muted.Surface.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(toolbar, text="SHOW", style="Muted.Surface.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(12, 0)
+        )
+        search = ttk.Entry(toolbar, textvariable=self.control_search)
+        search.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        search.bind("<KeyRelease>", self._filter_control_names)
+        search.bind("<Escape>", lambda _event: self.control_search.set(""))
+        kind_filter = ttk.Combobox(
+            toolbar,
+            textvariable=self.control_kind_filter,
+            values=("All controls", "Buttons", "Axes", "Gears", "Has blanks"),
+            state="readonly",
+            width=16,
+        )
+        kind_filter.grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(5, 0))
+        kind_filter.bind("<<ComboboxSelected>>", self._filter_control_names)
+        ttk.Label(
+            toolbar,
+            textvariable=self.control_result_summary,
+            style="Muted.Surface.TLabel",
+        ).grid(row=1, column=2, sticky="e", padx=(16, 0), pady=(5, 0))
+
+        table_card = ttk.Frame(
+            page,
+            style="Surface.TFrame",
+            borderwidth=1,
+            relief="solid",
+        )
+        table_card.pack(fill="both", expand=True)
+        table_card.columnconfigure(0, weight=1)
+        table_card.rowconfigure(0, weight=1)
+
+        columns = ("sim_config", *GAMES.keys())
+        self.control_tree = ttk.Treeview(
+            table_card,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
+            style="ControlMap.Treeview",
+        )
+        headings = {
+            "sim_config": "SIM CONFIG",
+            "iracing": "iRACING",
+            "assetto_corsa": "ASSETTO CORSA",
+            "assetto_corsa_competizione": "ACC",
+            "assetto_corsa_evo": "ASSETTO CORSA EVO",
+            "automobilista_2": "AUTOMOBILISTA 2",
+            "le_mans_ultimate": "LE MANS ULTIMATE",
+        }
+        widths = {
+            "sim_config": 230,
+            "iracing": 210,
+            "assetto_corsa": 230,
+            "assetto_corsa_competizione": 230,
+            "assetto_corsa_evo": 290,
+            "automobilista_2": 230,
+            "le_mans_ultimate": 230,
+        }
+        for column in columns:
+            self.control_tree.heading(column, text=headings[column], anchor="w")
+            self.control_tree.column(
+                column,
+                width=widths[column],
+                minwidth=150 if column != "sim_config" else 190,
+                stretch=False,
+                anchor="w",
+            )
+        self.control_tree.tag_configure("even", background=COLORS["surface"])
+        self.control_tree.tag_configure("odd", background="#121925")
+        self.control_tree.grid(row=0, column=0, sticky="nsew")
+        self.control_tree.bind("<<TreeviewSelect>>", self._control_name_selected)
+
+        vertical = ttk.Scrollbar(
+            table_card, orient="vertical", command=self.control_tree.yview
+        )
+        horizontal = ttk.Scrollbar(
+            table_card, orient="horizontal", command=self.control_tree.xview
+        )
+        self.control_tree.configure(
+            yscrollcommand=vertical.set,
+            xscrollcommand=horizontal.set,
+        )
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+
+        detail = ttk.Frame(
+            page,
+            style="Surface.TFrame",
+            padding=(16, 12),
+            borderwidth=1,
+            relief="solid",
+        )
+        detail.pack(fill="x", pady=(12, 0))
+        detail.columnconfigure(0, weight=1)
+        tk.Label(
+            detail,
+            textvariable=self.control_detail,
+            bg=COLORS["surface"],
+            fg=COLORS["muted"],
+            font=(FONT_TEXT, 9),
+            justify="left",
+            anchor="w",
+            wraplength=1040,
+        ).grid(row=0, column=0, sticky="ew")
+        tk.Label(
+            detail,
+            text="BLANK = NO KNOWN GAME CONTROL  •  SELECT A ROW FOR MAPPING NOTES",
+            bg=COLORS["surface"],
+            fg=COLORS["subtle"],
+            font=(FONT_TEXT, 8, "bold"),
+        ).grid(row=1, column=0, sticky="w", pady=(7, 0))
+
+        self._populate_control_names()
 
     def _build_control_names(self, page: ttk.Frame) -> None:
         self._page_heading(
@@ -1852,21 +2061,65 @@ class SimControlsApp(tk.Tk):
         self._populate_control_names()
 
     def _populate_control_names(self) -> None:
-        control_ids = _matching_tablet_shortcut_ids(self.control_search.get())
+        selected = self.control_tree.selection()
+        selected_id = selected[0] if selected else None
+        control_ids = list(_matching_control_ids(self.control_search.get()))
+        kind_filter = self.control_kind_filter.get()
+        if kind_filter == "Buttons":
+            control_ids = [
+                control_id
+                for control_id in control_ids
+                if CONTROLS[control_id].kind in ("button", "axis_or_button")
+            ]
+        elif kind_filter == "Axes":
+            control_ids = [
+                control_id
+                for control_id in control_ids
+                if CONTROLS[control_id].kind in ("axis", "axis_or_button")
+            ]
+        elif kind_filter == "Gears":
+            control_ids = [
+                control_id
+                for control_id in control_ids
+                if CONTROLS[control_id].kind == "gear"
+            ]
+        elif kind_filter == "Has blanks":
+            control_ids = [
+                control_id
+                for control_id in control_ids
+                if any(
+                    not NATIVE_CONTROL_NAMES[game_id][control_id].names
+                    for game_id in GAMES
+                )
+            ]
+
         self.control_tree.delete(*self.control_tree.get_children())
-        for control_id in control_ids:
+        for index, control_id in enumerate(control_ids):
             values = [CONTROLS[control_id].label]
             values.extend(
-                _native_control_text(NATIVE_CONTROL_NAMES[game_id][control_id])
+                _matrix_control_text(NATIVE_CONTROL_NAMES[game_id][control_id])
                 for game_id in GAMES
             )
-            self.control_tree.insert("", "end", iid=control_id, values=values)
-        total = len(_matching_tablet_shortcut_ids(""))
-        self.control_result_summary.set(f"{len(control_ids)} of {total} shortcuts")
-        self.control_detail.set(
-            "Select a control to see mapping notes. “Not exposed” is verified absence; "
-            "“Not observed” means the available game data was inconclusive."
+            self.control_tree.insert(
+                "",
+                "end",
+                iid=control_id,
+                values=values,
+                tags=("even" if index % 2 == 0 else "odd",),
+            )
+        self.control_result_summary.set(
+            f"{len(control_ids):,} of {len(CONTROLS):,} controls"
         )
+        if selected_id in control_ids:
+            self.control_tree.selection_set(selected_id)
+            self.control_tree.see(selected_id)
+        elif control_ids:
+            self.control_tree.selection_set(control_ids[0])
+            self._control_name_selected()
+        else:
+            self.control_detail.set(
+                "No controls match this search and filter combination."
+            )
 
     def _control_name_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.control_tree.selection()
@@ -1874,13 +2127,32 @@ class SimControlsApp(tk.Tk):
             return
         control_id = selection[0]
         control = CONTROLS[control_id]
-        details = [f"{control.label}  •  {control.kind.replace('_', ' ')}  •  {control_id}"]
+        mappings = {
+            game_id: NATIVE_CONTROL_NAMES[game_id][control_id]
+            for game_id in GAMES
+        }
+        named_count = sum(bool(mapping.names) for mapping in mappings.values())
+        details = [
+            f"{control.label}  •  {control.kind.replace('_', ' ')}  •  {control_id}  •  "
+            f"named in {named_count}/{len(GAMES)} games"
+        ]
+        notes = []
+        blanks = []
         for game_id, game_name in GAMES.items():
-            mapping = NATIVE_CONTROL_NAMES[game_id][control_id]
+            mapping = mappings[game_id]
             if mapping.note:
-                details.append(f"{game_name}: {mapping.note}")
-        if len(details) == 1:
-            details.append("All listed names are verified exact mappings.")
+                notes.append(f"{game_name}: {mapping.note}")
+            if not mapping.names:
+                blank_reason = (
+                    "not observed" if mapping.status == "not_observed" else "not exposed"
+                )
+                blanks.append(f"{game_name} ({blank_reason})")
+        if notes:
+            details.append("Notes — " + "  •  ".join(notes))
+        elif blanks:
+            details.append("Blank — " + ", ".join(blanks))
+        else:
+            details.append("All six native names are verified exact mappings.")
         self.control_detail.set("\n".join(details))
 
     def _build_recovery(self, page: ttk.Frame) -> None:

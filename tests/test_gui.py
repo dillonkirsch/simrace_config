@@ -20,6 +20,7 @@ from sim_controls_manager.gui import (
     _lmu_binding_text,
     _matching_control_ids,
     _matching_tablet_shortcut_ids,
+    _matrix_control_text,
     _native_control_text,
     _source_signature,
 )
@@ -60,6 +61,17 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertEqual(
             _native_control_text(NativeControlName(status="not_observed")),
             "Not observed",
+        )
+
+    def test_matrix_leaves_missing_controls_blank(self) -> None:
+        self.assertEqual(_matrix_control_text(NativeControlName(("Throttle",))), "Throttle")
+        self.assertEqual(
+            _matrix_control_text(NativeControlName(("Cycle TC", "TC toggle"))),
+            "Cycle TC / TC toggle",
+        )
+        self.assertEqual(
+            _matrix_control_text(NativeControlName(status="not_exposed")),
+            "",
         )
 
     def test_control_search_matches_central_and_native_names(self) -> None:
