@@ -68,7 +68,11 @@ def inspect_entry(path: Path) -> HistoryEntry:
 
 
 def discover_history(root: Path, extra_paths=()) -> tuple[HistoryEntry, ...]:
-    paths = set(root.rglob("*-receipt.json")) if root.is_dir() else set()
-    paths.update(Path(path) for path in extra_paths if path)
+    # Windows can expose the same directory under both its long name and an
+    # 8.3 alias (for example, ``runneradmin`` and ``RUNNER~1``).  Normalize
+    # every candidate before de-duplicating so history entries have stable
+    # paths and an explicitly selected receipt is not listed twice.
+    paths = {path.resolve() for path in root.rglob("*-receipt.json")} if root.is_dir() else set()
+    paths.update(Path(path).expanduser().resolve() for path in extra_paths if path)
     return tuple(sorted((inspect_entry(path) for path in paths),
                         key=lambda entry: (entry.created, str(entry.path)), reverse=True))
