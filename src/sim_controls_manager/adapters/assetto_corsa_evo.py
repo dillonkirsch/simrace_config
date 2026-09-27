@@ -157,8 +157,17 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     return ProfileInspection(profile, len(controllers), tuple(actions), True)
 
 
-def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
-    source = profile.controls_path.read_bytes()
+def plan_bindings(
+    profile: ProfileCandidate,
+    catalog: Catalog,
+    *,
+    source_bytes: bytes | None = None,
+) -> BindingPlan:
+    source = (
+        profile.controls_path.read_bytes()
+        if source_bytes is None
+        else bytes(source_bytes)
+    )
     top_fields = _parse_message(source)
     controllers = _controllers_from_fields(top_fields)
     selected_index = _selected_controller_index(controllers, catalog)

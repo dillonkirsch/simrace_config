@@ -12,7 +12,7 @@ from sim_controls_manager.adapters.le_mans_ultimate import (
     plan_bindings,
     validate_controls_bytes,
 )
-from sim_controls_manager.catalog import validate_catalog
+from sim_controls_manager.catalog import Binding, Catalog, VirtualDevice, validate_catalog
 
 
 VIRTUAL_KEY = "SimHub Virtual Controller-ABCDEF"
@@ -127,6 +127,21 @@ class LeMansUltimateAdapterTests(unittest.TestCase):
         updated = json.loads(plan.next_bytes)
         self.assertEqual(updated["Input"]["Speed Limiter"]["id"], 38)
         self.assertEqual(updated["Input"]["Shift Down"], inputs["Shift Down"])
+
+    def test_plans_an_exact_cross_game_control_outside_core_catalog(self):
+        catalog = Catalog(
+            1,
+            VirtualDevice(
+                "simhub-control-mapper", "SimHub Virtual Controller"
+            ),
+            (Binding("camera_zoom_in", 12),),
+        )
+        plan = plan_bindings(self._profile(), catalog)
+        updated = json.loads(plan.next_bytes)
+        self.assertEqual(
+            updated["Input"]["Camera Zoom In"],
+            {"device": VIRTUAL_KEY, "id": 43},
+        )
 
     def test_rejects_conflict_pedals_ambiguity_and_capacity(self):
         conflict = {"Shift Up": {"device": VIRTUAL_KEY, "id": 38}}

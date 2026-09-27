@@ -15,15 +15,19 @@ from pathlib import Path
 from typing import Any
 
 from sim_controls_manager.catalog import ACTION_IDS, Catalog
+from sim_controls_manager.control_names import CONTROLS, NATIVE_CONTROL_NAMES
 from sim_controls_manager.file_change import sha256
 
 
 FOLDERID_DOCUMENTS = "fdd39ad0-238f-46af-adb4-6c85480369c7"
 CONTROLS_FILE = Path("Config") / "controls.json"
 ACTION_MAP = {
-    "pit_limiter": "PitLimiter",
-    "tc_increase": "IncreaseTC",
-    "tc_decrease": "DecreaseTC",
+    control_id: NATIVE_CONTROL_NAMES["assetto_corsa_competizione"][control_id].names[0]
+    for control_id, control in CONTROLS.items()
+    if control.kind == "button"
+    and NATIVE_CONTROL_NAMES["iracing"][control_id].status == "exact"
+    and NATIVE_CONTROL_NAMES["assetto_corsa_competizione"][control_id].status
+    == "exact"
 }
 SIM_PROCESS_NAMES = frozenset(("ac2-win64-shipping.exe", "acc.exe"))
 
@@ -147,8 +151,17 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     return ProfileInspection(profile, document["version"], tuple(actions), True)
 
 
-def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
-    source = profile.controls_path.read_bytes()
+def plan_bindings(
+    profile: ProfileCandidate,
+    catalog: Catalog,
+    *,
+    source_bytes: bytes | None = None,
+) -> BindingPlan:
+    source = (
+        profile.controls_path.read_bytes()
+        if source_bytes is None
+        else bytes(source_bytes)
+    )
     text, document, bom = _decode_controls(source)
     devices = document["commandDevices"]
     device_index = _selected_device_index(devices, catalog)

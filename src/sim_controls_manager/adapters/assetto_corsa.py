@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sim_controls_manager.catalog import ACTION_IDS, Catalog
+from sim_controls_manager.control_names import CONTROLS, NATIVE_CONTROL_NAMES
 from sim_controls_manager.file_change import sha256
 
 
@@ -20,8 +21,13 @@ FOLDERID_DOCUMENTS = "fdd39ad0-238f-46af-adb4-6c85480369c7"
 LIVE_CONTROLS = Path("cfg") / "controls.ini"
 PRESET_DIRECTORY = Path("cfg") / "controllers" / "presets"
 ACTION_MAP = {
-    "tc_increase": "TCUP",
-    "tc_decrease": "TCDN",
+    control_id: NATIVE_CONTROL_NAMES["assetto_corsa"][control_id].names[0]
+    .removeprefix("[")
+    .removesuffix("]")
+    for control_id, control in CONTROLS.items()
+    if control.kind == "button"
+    and NATIVE_CONTROL_NAMES["iracing"][control_id].status == "exact"
+    and NATIVE_CONTROL_NAMES["assetto_corsa"][control_id].status == "exact"
 }
 SIM_PROCESS_NAMES = frozenset(("acs.exe", "assettocorsa.exe"))
 _CONTROLLER_NAME = re.compile(r"^CON(\d+)$", re.IGNORECASE)
@@ -183,10 +189,19 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     )
 
 
-def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
+def plan_bindings(
+    profile: ProfileCandidate,
+    catalog: Catalog,
+    *,
+    source_bytes: bytes | None = None,
+) -> BindingPlan:
     """Prepare a minimal, byte-preserving patch for supported catalog actions."""
 
-    source = profile.controls_path.read_bytes()
+    source = (
+        profile.controls_path.read_bytes()
+        if source_bytes is None
+        else bytes(source_bytes)
+    )
     document = parse_controls(source)
     if build_controls(document) != source:
         raise AssettoCorsaFormatError(

@@ -9,7 +9,7 @@
 | Assetto Corsa Competizione | Control JSON files have been observed, but no official schema is established in this research. | Path and profile selection, action IDs, device metadata, unknown field preservation, in-game effect. | Closed |
 | Assetto Corsa EVO | The installed executable embeds the protobuf schema for `input_devices.inputdeviceconfiguration`; the adapter now losslessly preserves unknown fields and uses action 138 plus action 140 payloads 1/2. | Register a SimHub DirectInput device, preview a real mapping, then verify zero-based buttons, TC payload direction, reload, and on-track effect. | Experimental writes enabled behind preview and active-profile confirmation |
 | Le Mans Ultimate | Studio 397 documents `current controls.json` and a shift toward GameInput with DirectInput fallback. | Action entries, input mode and device identifiers, files actually updated by the game. | Closed |
-| Automobilista 2 | A local install contains `default.controllersettings.v1.03.sav` under the documented account/profile hierarchy. Its 8-byte header contains an unknown word plus a declared length of 171,828 bytes and is followed by 171,840 bytes of 16-byte-block ciphertext. The installed executable identifies the save implementation as Twofish; repeated blocks and a common encrypted tail across neighboring `.sav` files confirm that the payload is not safe to patch as plaintext. The discovery-only adapter validates these structural invariants. | Key derivation, plaintext schema, first-header-word/checksum semantics, six-slot selection, device/button encoding, lossless round trip, and in-game effect. | Locked in code; no plan/apply/restore commands |
+| Automobilista 2 | A local install contains `default.controllersettings.v1.03.sav` under the documented account/profile hierarchy. Its 8-byte header contains a stable format/version word plus a declared payload length and is followed by 16-byte-block ciphertext. The installed executable identifies the save implementation as Twofish. A controlled `Keyboard: F1` to `Keyboard: 8` edit changed exactly one ciphertext block while preserving the header and lengths, strongly supporting independent block encryption. The discovery-only adapter validates these structural invariants. | Key derivation, plaintext schema, six-slot selection, device/button encoding, lossless round trip, and in-game effect. | Locked in code; no plan/apply/restore commands |
 
 "Closed" means no file writes enabled yet; it does not mean the project is blocked. Discovery and backups can precede full adapters.
 
@@ -27,6 +27,15 @@ For **each** game and build:
 8. Round trip a fixture unchanged. Patch a copy, reload it in the game, verify the actual action, and test restore.
 
 For opaque files, compare multiple controlled saves before attributing byte changes to bindings. Compression, checksums, generated IDs, and incidental settings can make a simple binary diff misleading.
+
+### Automobilista 2 sample observations (2026-09-26)
+
+- The untouched controller file declared 171,828 payload bytes. Assigning `F1` to Pit Speed Limiter increased that to 172,008 bytes, but `F1` also displaced an existing binding, so this transition contains more than one logical edit.
+- Replacing only that Pit Speed Limiter binding from `F1` with `8` preserved the 172,008-byte declared length, the 172,016-byte padded ciphertext length, and both header words.
+- The clean `F1` to `8` transition changed one 16-byte ciphertext block: payload block 6,602, beginning at file offset 105,640 (`0x19CA8`). The neighboring blocks were byte-identical.
+- A subsequent `8` to `9` capture changed payload block 6,602 again, confirming that this block contains the Pit Speed Limiter keyboard binding. Ten additional, nonadjacent blocks changed during the intervening game reload/save cycle; treat those as incidental state until their purpose is isolated.
+- `default.sav` was byte-identical between the `F1` and `8` captures. The championship editor and local-settings saves were identical across all three captures. The controller-settings save is therefore the only file needed for subsequent single-binding experiments.
+- The stable first header word across all samples rules it out as a content checksum for these edits. Treat it as an unknown format/version marker until independently identified.
 
 ## Research questions
 

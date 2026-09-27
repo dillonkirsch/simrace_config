@@ -13,7 +13,7 @@ from sim_controls_manager.adapters.acc import (
     plan_bindings,
     validate_controls_bytes,
 )
-from sim_controls_manager.catalog import validate_catalog
+from sim_controls_manager.catalog import Binding, Catalog, VirtualDevice, validate_catalog
 
 
 def _button(action: str, index: int) -> dict:
@@ -169,6 +169,32 @@ class ACCAdapterTests(unittest.TestCase):
         plan = plan_bindings(self._profile(), selected_catalog(with_guid=False))
         self.assertTrue(plan.changes)
         self.assertTrue(all(change.after.device_index == 1 for change in plan.changes))
+
+    def test_plans_an_exact_cross_game_control_outside_core_catalog(self) -> None:
+        catalog = Catalog(
+            1,
+            VirtualDevice(
+                "simhub-control-mapper",
+                "SimHub Virtual Controller",
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ),
+            (Binding("shift_up", 12),),
+        )
+        plan = plan_bindings(self._profile(), catalog)
+        buttons = json.loads(plan.next_bytes)["commandDevices"][1][
+            "raceCommandButtonList"
+        ]
+        self.assertIn(
+            {"instantActionCode": "GearUp", "buttonIndex": 11},
+            [
+                {
+                    "instantActionCode": entry["instantActionCode"],
+                    "buttonIndex": entry["buttonIndex"],
+                }
+                for entry in buttons
+            ],
+        )
 
     def test_rejects_pedals_and_existing_button_conflict(self) -> None:
         pedal_profile = self._profile(synthetic_controls(virtual_is_pedals=1))

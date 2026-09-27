@@ -42,6 +42,13 @@ identities every few seconds. Changes are rescanned and re-previewed
 automatically; they are never applied without explicit confirmation. The
 Recovery screen previews a receipt before restoring its backup.
 
+The Bindings screen also has a **Copy iRacing → other games** button. It reads
+the selected (or active) iRacing profile and copies only verified equivalent
+button controls to each detected, write-capable game. Unbound controls,
+keyboard or axis bindings, unsupported game actions, conflicts, and AMS2's
+read-only encrypted profile are left unchanged. The confirmation shows a
+per-game preview, and every changed file receives its own verified backup.
+
 The **Tablet deck** screen is a touch-first, multi-page deck designer. It ships
 with editable Race, Pit, Replay, Camera, and Chat pages in an 8×4 layout. Tiles
 use high-contrast line icons, can be swapped by dragging, and expose editable

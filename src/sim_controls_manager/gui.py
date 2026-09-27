@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, TypeVar
 
-from sim_controls_manager import deck_layout, simhub, updater
+from sim_controls_manager import deck_layout, simhub, transfer, updater
 from sim_controls_manager.adapters import (
     acc,
     assetto_corsa,
@@ -970,7 +970,14 @@ class SimControlsApp(tk.Tk):
             textvariable=self.active_ack_label,
             variable=self.active_ack,
             command=self._update_apply_state,
-        ).pack(side="left")
+        ).pack(side="left", padx=(12, 0))
+        self.copy_iracing_button = self._button(
+            actions,
+            "Copy iRacing → other games",
+            self.copy_iracing_to_games,
+            primary=True,
+        )
+        self.copy_iracing_button.pack(side="left")
         self.apply_button = self._button(actions, "Apply safely", self.apply_plan, danger=True)
         self.apply_button.pack(side="right", padx=(10, 0))
         self.preview_button = self._button(actions, "Refresh preview", self.preview_bindings, primary=True)
@@ -1968,6 +1975,7 @@ class SimControlsApp(tk.Tk):
         state = "disabled" if busy else "normal"
         self.scan_button.configure(state=state)
         self.preview_button.configure(state=state)
+        self.copy_iracing_button.configure(state=state)
         if not busy:
             self._update_apply_state()
 
@@ -2665,6 +2673,225 @@ class SimControlsApp(tk.Tk):
             task,
             lambda result: self._apply_complete(result, game_name),
         )
+
+    def _preferred_profile(self, discovery, game_id: str):
+        if not discovery or not discovery.profiles:
+            return None
+        if self._selected_game_id() == game_id:
+            selected_name = self.profile_name.get()
+            selected = next(
+                (
+                    profile
+                    for profile in discovery.profiles
+                    if profile.name == selected_name
+                ),
+                None,
+            )
+            if selected is not None:
+                return selected
+        return next(
+            (profile for profile in discovery.profiles if profile.active),
+            discovery.profiles[0],
+        )
+
+    def copy_iracing_to_games(self) -> None:
+        source_profile = self._preferred_profile(self.discovery, "iracing")
+        if source_profile is None:
+            messagebox.showerror(
+                "Cannot copy iRacing bindings",
+                "Scan a valid iRacing control profile first.",
+                parent=self,
+            )
+            return
+
+        target_discoveries = {
+            "assetto_corsa": self.assetto_corsa_discovery,
+            "acc": self.acc_discovery,
+            "assetto_corsa_evo": self.assetto_corsa_evo_discovery,
+            "lmu": self.lmu_discovery,
+        }
+        target_profiles = {}
+        skipped_games = []
+        for game_id, discovery in target_discoveries.items():
+            profile = self._preferred_profile(discovery, game_id)
+            if profile is None:
+                skipped_games.append((transfer.GAME_LABELS[game_id], "not detected"))
+            else:
+                target_profiles[game_id] = profile
+        if self.automobilista_2_discovery:
+            skipped_games.append(
+                (
+                    "Automobilista 2",
+                    "encrypted controller format is read-only",
+                )
+            )
+
+        def task():
+            return transfer.build_preview(
+                source_profile,
+                self.devices,
+                target_profiles,
+                tuple(skipped_games),
+            )
+
+        self._run_task(
+            "Comparing iRacing buttons with the other games…",
+            task,
+            self._confirm_iracing_transfer,
+        )
+
+    def _confirm_iracing_transfer(self, preview: transfer.TransferPreview) -> None:
+        changed_targets = tuple(
+            target for target in preview.targets if target.changes
+        )
+        lines = [
+            f"Source: iRacing / {preview.source_profile.name}",
+            "",
+        ]
+        for target in preview.targets:
+            count = len(target.changes)
+            detail = f"{count} change{'s' if count != 1 else ''}"
+            if target.unsupported_actions:
+                detail += f"; {len(target.unsupported_actions)} unsupported left unchanged"
+            lines.append(f"• {target.game_name} / {target.profile.name}: {detail}")
+        for game_name, reason in preview.skipped_games:
+            lines.append(f"• {game_name}: skipped — {reason}")
+        if preview.skipped_source_actions:
+            labels = [
+                CONTROLS[action_id].label
+                for action_id in preview.skipped_source_actions
+            ]
+            examples = ", ".join(labels[:5])
+            remainder = len(labels) - 5
+            if remainder > 0:
+                examples += f", and {remainder} more"
+            lines.extend(
+                (
+                    "",
+                    "Unbound, ambiguous, non-button, or disconnected iRacing "
+                    f"controls skipped: {examples}",
+                )
+            )
+
+        if not changed_targets:
+            messagebox.showinfo(
+                "No cross-game changes needed",
+                "\n".join(lines),
+                parent=self,
+            )
+            self.footer_status.set("Other games already match the transferable iRacing buttons")
+            return
+
+        lines.extend(
+            (
+                "",
+                "Only verified equivalent controls are included. All other settings stay unchanged.",
+                "A separate verified backup is created for every changed game. Close those games before continuing.",
+            )
+        )
+        if not messagebox.askyesno(
+            "Apply iRacing buttons to other games?",
+            "\n".join(lines),
+            icon="warning",
+            parent=self,
+        ):
+            self.footer_status.set("iRacing copy cancelled")
+            return
+
+        self._run_task(
+            "Backing up and applying iRacing buttons to other games…",
+            lambda: self._apply_iracing_transfer(changed_targets),
+            lambda result: self._iracing_transfer_complete(result, preview),
+        )
+
+    def _apply_iracing_transfer(self, targets: tuple[transfer.TargetPlan, ...]):
+        successes = []
+        failures = []
+        for target in targets:
+            try:
+                file_plan = plan_file_change(
+                    target.profile.controls_path, target.next_bytes
+                )
+                if file_plan.source_hash != target.source_hash:
+                    raise FileChangeError(
+                        "SOURCE_CHANGED",
+                        "The profile changed after preview. Run the copy again.",
+                    )
+                if target.game_id == "assetto_corsa":
+                    result = apply_file_change(
+                        file_plan,
+                        _assetto_corsa_backup_directory(target.profile.name),
+                        validate=assetto_corsa.validate_controls_bytes,
+                        is_target_in_use=assetto_corsa.is_assetto_corsa_running,
+                    )
+                elif target.game_id == "acc":
+                    result = apply_file_change(
+                        file_plan,
+                        _acc_backup_directory(),
+                        validate=acc.validate_controls_bytes,
+                        is_target_in_use=acc.is_acc_running,
+                    )
+                elif target.game_id == "assetto_corsa_evo":
+                    result = apply_file_change(
+                        file_plan,
+                        _assetto_corsa_evo_backup_directory(),
+                        validate=assetto_corsa_evo.validate_controls_bytes,
+                        is_target_in_use=assetto_corsa_evo.is_assetto_corsa_evo_running,
+                    )
+                else:
+                    result = apply_file_change(
+                        file_plan,
+                        _lmu_backup_directory(target.profile.name),
+                        validate=le_mans_ultimate.validate_controls_bytes,
+                        is_target_in_use=le_mans_ultimate.is_lmu_running,
+                    )
+                successes.append((target, result))
+            except Exception as error:
+                failures.append((target, error))
+        return tuple(successes), tuple(failures)
+
+    def _iracing_transfer_complete(
+        self,
+        result,
+        preview: transfer.TransferPreview,
+    ) -> None:
+        successes, failures = result
+        receipts = [
+            apply_result.receipt_path
+            for _target, apply_result in successes
+            if apply_result.receipt_path is not None
+        ]
+        if receipts:
+            self.last_receipt = receipts[-1]
+            self.receipt_path.set(str(receipts[-1]))
+            self._inspect_receipt()
+
+        lines = []
+        for target, _apply_result in successes:
+            lines.append(
+                f"✓ {target.game_name} / {target.profile.name}: "
+                f"{len(target.changes)} change{'s' if len(target.changes) != 1 else ''}"
+            )
+        for target, error in failures:
+            lines.append(f"✗ {target.game_name} / {target.profile.name}: {error}")
+        for game_name, reason in preview.skipped_games:
+            lines.append(f"— {game_name}: skipped — {reason}")
+
+        if failures:
+            self.footer_status.set("iRacing copy completed with skipped or failed games")
+            messagebox.showwarning(
+                "iRacing copy partially completed",
+                "\n".join(lines),
+                parent=self,
+            )
+        else:
+            self.footer_status.set("iRacing buttons copied to compatible games")
+            messagebox.showinfo(
+                "iRacing buttons copied",
+                "\n".join(lines),
+                parent=self,
+            )
+        self.after(25, self.scan_setup)
 
     def _apply_complete(self, result, game_name: str) -> None:
         self.last_receipt = result.receipt_path

@@ -12,14 +12,17 @@ from pathlib import Path
 from typing import Any
 
 from sim_controls_manager.catalog import ACTION_IDS, Catalog
+from sim_controls_manager.control_names import CONTROLS, NATIVE_CONTROL_NAMES
 from sim_controls_manager.file_change import sha256
 
 
 PRESET_DIRECTORY = Path("UserData") / "Controller" / "Presets"
 ACTION_MAP = {
-    "pit_limiter": "Speed Limiter",
-    "tc_increase": "Traction Control Up",
-    "tc_decrease": "Traction Control Down",
+    control_id: NATIVE_CONTROL_NAMES["le_mans_ultimate"][control_id].names[0]
+    for control_id, control in CONTROLS.items()
+    if control.kind == "button"
+    and NATIVE_CONTROL_NAMES["iracing"][control_id].status == "exact"
+    and NATIVE_CONTROL_NAMES["le_mans_ultimate"][control_id].status == "exact"
 }
 BUTTON_ID_OFFSET = 32
 SIM_PROCESS_NAMES = frozenset(
@@ -154,8 +157,17 @@ def inspect_profile(profile: ProfileCandidate) -> ProfileInspection:
     return ProfileInspection(profile, document["Type"], tuple(actions), True)
 
 
-def plan_bindings(profile: ProfileCandidate, catalog: Catalog) -> BindingPlan:
-    source = profile.controls_path.read_bytes()
+def plan_bindings(
+    profile: ProfileCandidate,
+    catalog: Catalog,
+    *,
+    source_bytes: bytes | None = None,
+) -> BindingPlan:
+    source = (
+        profile.controls_path.read_bytes()
+        if source_bytes is None
+        else bytes(source_bytes)
+    )
     text, document, bom = _decode_controls(source)
     inputs = document["Input"]
     devices = document["Devices"]
