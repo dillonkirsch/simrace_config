@@ -28,6 +28,16 @@ from sim_controls_manager.gui import (
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_deck_display_labels_calm_legacy_caps_and_keep_acronyms(self) -> None:
+        self.assertEqual(
+            gui.SimControlsApp._deck_display_label("PIT\nLIMITER"),
+            "Pit\nLimiter",
+        )
+        self.assertEqual(
+            gui.SimControlsApp._deck_display_label("TC +\nABS −"),
+            "TC +\nABS −",
+        )
+
     def test_formats_evo_button_as_user_facing_one_based(self) -> None:
         binding = EVONativeBinding("button", 6, 1, "instance", "SimHub", None)
         self.assertEqual(
