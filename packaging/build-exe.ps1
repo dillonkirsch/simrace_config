@@ -34,8 +34,12 @@ Set-Content -Path "src/sim_controls_manager/_buildinfo.py" `
 $exe = "dist\SimControlsManager.exe"
 $cliExe = "dist\SimControlsManagerCLI.exe"
 $icon = Join-Path $root "packaging\assets\sim-controls-manager.ico"
+$iconImage = Join-Path $root "packaging\assets\sim-controls-manager.png"
 if (-not (Test-Path -LiteralPath $icon)) {
     throw "Application icon not found: $icon"
+}
+if (-not (Test-Path -LiteralPath $iconImage)) {
+    throw "Application icon image not found: $iconImage"
 }
 $pyInstallerWork = Join-Path $root ("build\pyinstaller-" + [guid]::NewGuid().ToString("N"))
 if (Test-Path -LiteralPath $exe) {
@@ -57,6 +61,8 @@ Invoke-CheckedPython @(
     "--onefile", "--windowed",
     "--name", "SimControlsManager",
     "--icon", $icon,
+    "--add-data", "$icon;.",
+    "--add-data", "$iconImage;.",
     "--paths", "src",
     "--workpath", $pyInstallerWork,
     "--specpath", $pyInstallerWork,

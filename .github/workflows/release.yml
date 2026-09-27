@@ -57,6 +57,8 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed `
             --name SimControlsManager --icon packaging/assets/sim-controls-manager.ico `
+            --add-data "packaging/assets/sim-controls-manager.ico;." `
+            --add-data "packaging/assets/sim-controls-manager.png;." `
             --paths src packaging/launcher.py
           python -m PyInstaller --noconfirm --clean --onefile --console `
             --name SimControlsManagerCLI --icon packaging/assets/sim-controls-manager.ico `

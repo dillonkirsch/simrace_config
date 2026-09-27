@@ -20,6 +20,7 @@ from sim_controls_manager.gui import (
     _lmu_binding_text,
     _matching_control_ids,
     _matching_tablet_shortcut_ids,
+    _grid_control_text,
     _matrix_control_text,
     _native_control_text,
     _source_signature,
@@ -72,6 +73,21 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertEqual(
             _matrix_control_text(NativeControlName(status="not_exposed")),
             "",
+        )
+
+    def test_grid_formats_mapping_states_without_relying_on_color(self) -> None:
+        self.assertEqual(_grid_control_text(NativeControlName(("Throttle",))), "Throttle")
+        self.assertEqual(
+            _grid_control_text(NativeControlName(("Cycle TC",), "compound")),
+            "◇  Cycle TC",
+        )
+        self.assertEqual(
+            _grid_control_text(NativeControlName(status="not_exposed")),
+            "—  Unsupported",
+        )
+        self.assertEqual(
+            _grid_control_text(NativeControlName(status="not_observed")),
+            "—  Not observed",
         )
 
     def test_control_search_matches_central_and_native_names(self) -> None:
